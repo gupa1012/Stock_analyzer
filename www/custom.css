@@ -1,0 +1,248 @@
+/* www/custom.css – Stock Analyzer Dark Theme */
+
+/* ── Google Font ─────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+/* ── Base resets ─────────────────────────────────────────────────────────────── */
+body, .wrapper {
+  background-color: #0d0d1a !important;
+  color: #ecf0f1 !important;
+  font-family: 'Roboto', sans-serif !important;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────────── */
+.main-sidebar, .left-side {
+  background-color: #12122a !important;
+  border-right: 1px solid rgba(255,255,255,0.07);
+}
+.main-sidebar .sidebar-menu > li > a {
+  color: #bdc3c7 !important;
+}
+.main-sidebar .sidebar-menu > li.active > a,
+.main-sidebar .sidebar-menu > li > a:hover {
+  color: #ffffff !important;
+  background-color: rgba(52,152,219,0.2) !important;
+  border-left: 3px solid #3498db;
+}
+
+/* ── Top header ──────────────────────────────────────────────────────────────── */
+.main-header .navbar, .main-header .logo {
+  background-color: #12122a !important;
+  border-bottom: 2px solid #3498db !important;
+}
+.main-header .logo {
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 0.5px;
+  color: #ecf0f1 !important;
+}
+
+/* ── Content wrapper ─────────────────────────────────────────────────────────── */
+.content-wrapper {
+  background-color: #0d0d1a !important;
+}
+
+/* ── Boxes / cards ───────────────────────────────────────────────────────────── */
+.box {
+  background-color: #16213e !important;
+  border-top-color: #3498db !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4) !important;
+}
+.box-header {
+  background-color: #16213e !important;
+  color: #ecf0f1 !important;
+}
+.box-body {
+  background-color: #16213e !important;
+  color: #ecf0f1 !important;
+}
+
+/* ── Tab panels ──────────────────────────────────────────────────────────────── */
+.nav-tabs-custom {
+  background-color: #16213e !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4) !important;
+}
+.nav-tabs-custom > .nav-tabs > li > a {
+  color: #bdc3c7 !important;
+  background-color: transparent !important;
+}
+.nav-tabs-custom > .nav-tabs > li.active > a {
+  color: #ecf0f1 !important;
+  background-color: #0d0d1a !important;
+  border-top: 3px solid #3498db !important;
+}
+.nav-tabs-custom > .tab-content {
+  background-color: #16213e !important;
+  color: #ecf0f1 !important;
+}
+
+/* ── KPI Cards ───────────────────────────────────────────────────────────────── */
+.kpi-card {
+  background-color: #1e2a45;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 8px;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+}
+.kpi-title {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #95a5a6;
+  margin-bottom: 6px;
+}
+.kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #ecf0f1;
+  line-height: 1.2;
+}
+.kpi-sub {
+  font-size: 11px;
+  color: #7f8c8d;
+  margin-top: 4px;
+}
+
+/* ── Stock header ────────────────────────────────────────────────────────────── */
+.stock-header {
+  padding: 18px 24px;
+  background: linear-gradient(135deg, #1e3a5f 0%, #12122a 100%);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  border-left: 5px solid #3498db;
+}
+.stock-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #ecf0f1;
+}
+.stock-header .stock-meta {
+  color: #95a5a6;
+  font-size: 13px;
+}
+.stock-price {
+  font-size: 32px;
+  font-weight: 700;
+  color: #ecf0f1;
+}
+.stock-change-pos { color: #27ae60; }
+.stock-change-neg { color: #e74c3c; }
+
+/* ── Welcome screen ──────────────────────────────────────────────────────────── */
+.welcome-box {
+  text-align: center;
+  padding: 80px 20px;
+  color: #7f8c8d;
+}
+.welcome-box .fa {
+  font-size: 64px;
+  color: #2c3e50;
+  display: block;
+  margin-bottom: 20px;
+}
+.welcome-box h2 {
+  color: #95a5a6;
+  font-weight: 300;
+  font-size: 28px;
+}
+
+/* ── Analyze button ──────────────────────────────────────────────────────────── */
+#analyze {
+  background: linear-gradient(135deg, #2980b9, #3498db) !important;
+  border: none !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.5px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s !important;
+  box-shadow: 0 3px 10px rgba(52,152,219,0.4) !important;
+  margin: 8px 5% !important;
+}
+#analyze:hover {
+  background: linear-gradient(135deg, #1a6fa0, #2980b9) !important;
+  box-shadow: 0 5px 15px rgba(52,152,219,0.6) !important;
+  transform: translateY(-1px);
+}
+
+/* ── DataTables ──────────────────────────────────────────────────────────────── */
+.dataTables_wrapper .dataTables_length,
+.dataTables_wrapper .dataTables_filter,
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate {
+  color: #bdc3c7 !important;
+}
+table.dataTable thead th {
+  background-color: #1e2a45 !important;
+  color: #ecf0f1 !important;
+  border-bottom: 1px solid #2c3e5a !important;
+}
+table.dataTable tbody tr {
+  background-color: #16213e !important;
+  color: #ecf0f1 !important;
+}
+table.dataTable tbody tr:nth-child(even) {
+  background-color: #1a2640 !important;
+}
+table.dataTable tbody tr:hover {
+  background-color: #1e3a5f !important;
+}
+table.dataTable, table.dataTable td {
+  border-color: #2c3e5a !important;
+}
+
+/* ── Select picker ───────────────────────────────────────────────────────────── */
+.bootstrap-select .dropdown-menu {
+  background-color: #1e2a45 !important;
+  border: 1px solid #2c3e5a !important;
+}
+.bootstrap-select .dropdown-menu li a {
+  color: #ecf0f1 !important;
+}
+.bootstrap-select .dropdown-menu li.active a,
+.bootstrap-select .dropdown-menu li a:hover {
+  background-color: #2980b9 !important;
+}
+.dropdown-toggle {
+  background-color: #1e2a45 !important;
+  border: 1px solid #2c3e5a !important;
+  color: #ecf0f1 !important;
+}
+
+/* ── Notification styling ────────────────────────────────────────────────────── */
+.shiny-notification {
+  background-color: #1e2a45 !important;
+  color: #ecf0f1 !important;
+  border-left: 4px solid #3498db !important;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────────────── */
+.shiny-spinner-output-container .load-container {
+  color: #3498db;
+}
+
+/* ── Demo button ─────────────────────────────────────────────────────────────── */
+#demo {
+  background: rgba(243,156,18,0.15) !important;
+  border: 1px solid rgba(243,156,18,0.4) !important;
+  color: #f39c12 !important;
+  font-weight: 500 !important;
+  border-radius: 6px !important;
+  transition: all 0.2s !important;
+}
+#demo:hover {
+  background: rgba(243,156,18,0.3) !important;
+  border-color: #f39c12 !important;
+}
+
+/* ── Scrollbar styling ───────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #12122a; }
+::-webkit-scrollbar-thumb { background: #2c3e5a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3498db; }
