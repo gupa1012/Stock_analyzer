@@ -162,7 +162,7 @@ sentimentServer <- function(id) {
         value = val,
         number = list(
           font = list(color = "#ecf0f1", size = 28,
-                      family = "Consolas, monospace"),
+                      family = "JetBrains Mono, Consolas, monospace"),
           suffix = "",
           valueformat = "+.2f"
         ),

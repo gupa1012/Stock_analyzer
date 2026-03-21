@@ -193,7 +193,7 @@ dashboardTabServer <- function(id) {
         type = "pie", hole = 0.6,
         textinfo = "label+percent",
         textfont = list(color = "#ecf0f1", size = 11,
-                        family = "Consolas, monospace"),
+                        family = "JetBrains Mono, Consolas, monospace"),
         marker = list(
           colors = c("#f5a623", "#ff6f00", "#ff8f00", "#ffab00",
                      "#ffd600", "#aeea00", "#64dd17", "#00c853",

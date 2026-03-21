@@ -118,7 +118,7 @@ parse_rss_feed <- function(url, source_name = "Unknown",
   tryCatch({
     resp <- httr::GET(url,
       httr::timeout(timeout_seconds),
-      httr::user_agent("Mozilla/5.0 (compatible; StockAnalyzer/1.0)")
+      httr::user_agent("Mozilla/5.0 (compatible; BloombergTerminalLight/2.0)")
     )
     if (httr::status_code(resp) != 200) return(data.frame())
 
