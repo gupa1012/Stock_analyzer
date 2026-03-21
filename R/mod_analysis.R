@@ -204,7 +204,8 @@ analysisServer <- function(id) {
 
     # ── Active ticker ──
     active_ticker <- reactive({
-      custom <- trimws(input$custom_ticker %||% "")
+      ct <- input$custom_ticker
+      custom <- if (is.null(ct)) "" else trimws(ct)
       if (nchar(custom) > 0) toupper(custom) else input$sel_ticker
     })
 
@@ -293,7 +294,7 @@ analysisServer <- function(id) {
     # ── Chart renderers ──
     output$chart_radar <- plotly::renderPlotly({
       d <- rv$data; if (is.null(d)) return(NULL)
-      chart_radar(d$summary, d$history)
+      chart_radar(d$history, d$ticker)
     })
     output$chart_revenue_overview <- plotly::renderPlotly({
       d <- rv$data; if (is.null(d)) return(NULL)
