@@ -3,20 +3,29 @@
 # Usage:  Rscript install.R
 
 pkgs <- c(
+  # Core Shiny
   "shiny",
   "shinydashboard",
   "shinyWidgets",
   "shinycssloaders",
+  # Data & scraping
   "RSelenium",
   "rvest",
+  "httr",
+  "jsonlite",
+  "xml2",
+  # Market data
+  "quantmod",
+  "zoo",
+  # Visualisation
   "plotly",
   "DT",
+  # Data manipulation
   "dplyr",
   "tidyr",
   "stringr",
-  "jsonlite",
-  "htmltools",
-  "httr"
+  # HTML
+  "htmltools"
 )
 
 missing <- pkgs[!pkgs %in% rownames(installed.packages())]
