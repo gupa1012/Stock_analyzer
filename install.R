@@ -16,6 +16,7 @@ pkgs <- c(
   "xml2",
   # Market data
   "quantmod",
+  "alphavantager",
   "zoo",
   # Visualisation
   "plotly",

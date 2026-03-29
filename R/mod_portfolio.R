@@ -31,7 +31,7 @@ portfolioUI <- function(id) {
           fluidRow(
             column(3, textInput(ns("add_ticker"), "Ticker", placeholder = "AAPL")),
             column(2, numericInput(ns("add_shares"), "Shares", value = 0, min = 0)),
-            column(2, numericInput(ns("add_cost"), "Avg Cost ($)", value = 0, min = 0, step = 0.01)),
+            column(2, numericInput(ns("add_cost"), "Avg Cost (native)", value = 0, min = 0, step = 0.01)),
             column(3, textInput(ns("add_notes"), "Notes", placeholder = "Optional")),
             column(2, div(style = "margin-top: 25px;",
               actionButton(ns("btn_add"), "ADD",
@@ -47,8 +47,28 @@ portfolioUI <- function(id) {
     fluidRow(
       column(8,
         div(class = "bb-panel",
-          h4(icon("table"), "HOLDINGS", class = "bb-panel-title"),
-          DT::dataTableOutput(ns("tbl_holdings"))
+          div(style = "display:flex; align-items:center; justify-content:space-between;",
+            h4(icon("table"), "HOLDINGS", class = "bb-panel-title",
+               style = "margin-bottom:0;"),
+            div(style = "display:flex; align-items:center; gap:12px;",
+              shinyWidgets::materialSwitch(
+                inputId = ns("xray_on"),
+                label   = HTML("<span style='font-size:11px;letter-spacing:1px;color:#f5a623;'>ETF X-RAY</span>"),
+                value   = FALSE,
+                status  = "warning",
+                inline  = TRUE
+              ),
+              conditionalPanel(
+                condition = paste0("input['" , ns("xray_on"), "'] == true"),
+                actionButton(ns("btn_refresh_xray"), "",
+                             icon  = icon("sync-alt"),
+                             class = "btn-xs bb-btn-secondary",
+                             title = "ETF-Positionen neu abrufen")
+              )
+            )
+          ),
+          DT::dataTableOutput(ns("tbl_holdings")),
+          uiOutput(ns("xray_panel"))
         )
       ),
       column(4,
@@ -73,8 +93,10 @@ portfolioServer <- function(id, trigger_refresh) {
     ns <- session$ns
 
     rv <- reactiveValues(
-      portfolio = read_portfolio(),
-      quotes    = NULL
+      portfolio       = read_portfolio(),
+      quotes          = NULL,
+      xray_holdings   = list(),   # named list: ticker -> data.frame
+      xray_fetched_at = NULL      # POSIXct timestamp of last fetch
     )
 
     # ── Refresh quotes when portfolio changes or trigger fires ──
@@ -89,7 +111,7 @@ portfolioServer <- function(id, trigger_refresh) {
         rv$quotes <- NULL
         return()
       }
-      tickers <- unique(pf$ticker)
+      tickers <- unique(c(pf$ticker, required_fx_tickers(pf$currency)))
       rv$quotes <- tryCatch(fetch_quotes(tickers), error = function(e) NULL)
     })
 
@@ -137,19 +159,21 @@ portfolioServer <- function(id, trigger_refresh) {
       pf$market_value  <- NA_real_
       pf$pnl           <- NA_real_
       pf$pnl_pct       <- NA_real_
-      pf$day_change     <- NA_real_
+      pf$day_change    <- NA_real_
+      pf$avg_cost_eur  <- NA_real_
 
       if (!is.null(qt) && nrow(qt) > 0) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
           if (nrow(row_q) > 0) {
-            pf$current_price[i] <- row_q$price[1]
-            pf$market_value[i]  <- row_q$price[1] * pf$shares[i]
-            cost_basis <- pf$avg_cost[i] * pf$shares[i]
+            pf$current_price[i] <- convert_amount_to_base(row_q$price[1], pf$currency[i], qt)
+            pf$market_value[i]  <- convert_amount_to_base(row_q$price[1] * pf$shares[i], pf$currency[i], qt)
+            pf$avg_cost_eur[i]  <- convert_amount_to_base(pf$avg_cost[i], pf$currency[i], qt)
+            cost_basis <- convert_amount_to_base(pf$avg_cost[i] * pf$shares[i], pf$currency[i], qt)
             pf$pnl[i]      <- pf$market_value[i] - cost_basis
             pf$pnl_pct[i]  <- if (cost_basis > 0)
               round((pf$market_value[i] / cost_basis - 1) * 100, 2) else NA
-            pf$day_change[i] <- row_q$change[1] * pf$shares[i]
+            pf$day_change[i] <- convert_amount_to_base(row_q$change[1] * pf$shares[i], pf$currency[i], qt)
           }
         }
       }
@@ -157,23 +181,19 @@ portfolioServer <- function(id, trigger_refresh) {
       data.frame(
         Ticker       = pf$ticker,
         Shares       = pf$shares,
-        `Avg Cost`   = sprintf("$%.2f", pf$avg_cost),
+        `Avg Cost`   = ifelse(is.na(pf$avg_cost_eur), "--",
+                              format_base_currency(pf$avg_cost_eur, digits = 2)),
         `Price`      = ifelse(is.na(pf$current_price), "--",
-                              sprintf("$%.2f", pf$current_price)),
+                              format_base_currency(pf$current_price, digits = 2)),
         `Mkt Value`  = ifelse(is.na(pf$market_value), "--",
-                              sprintf("$%s", formatC(pf$market_value,
-                                      format = "f", digits = 0,
-                                      big.mark = ","))),
+                              format_base_currency(pf$market_value, digits = 0)),
         `P&L`        = ifelse(is.na(pf$pnl), "--",
-                              sprintf("%s$%s",
-                                      ifelse(pf$pnl >= 0, "+", "-"),
-                                      formatC(abs(pf$pnl), format = "f",
-                                              digits = 0, big.mark = ","))),
+                              format_signed_base_currency(pf$pnl, digits = 0)),
         `P&L %`      = ifelse(is.na(pf$pnl_pct), "--",
                               paste0(ifelse(pf$pnl_pct >= 0, "+", ""),
                                      pf$pnl_pct, "%")),
         `Day Chg`    = ifelse(is.na(pf$day_change), "--",
-                              sprintf("%+.0f", pf$day_change)),
+                              format_signed_base_currency(pf$day_change, digits = 0)),
         check.names  = FALSE,
         stringsAsFactors = FALSE
       )
@@ -204,12 +224,17 @@ portfolioServer <- function(id, trigger_refresh) {
       if (nrow(pf) > 0 && !is.null(qt) && nrow(qt) > 0) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
-          if (nrow(row_q) > 0) total <- total + row_q$price[1] * pf$shares[i]
+          if (nrow(row_q) > 0) {
+            total <- total + convert_amount_to_base(
+              row_q$price[1] * pf$shares[i],
+              pf$currency[i],
+              qt
+            )
+          }
         }
       }
       bb_kpi("TOTAL VALUE",
-             paste0("$", formatC(total, format = "f", digits = 0,
-                                 big.mark = ",")),
+             format_base_currency(total, digits = 0),
              colour = "#f5a623")
     })
 
@@ -221,12 +246,16 @@ portfolioServer <- function(id, trigger_refresh) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
           if (nrow(row_q) > 0 && !is.na(row_q$change[1]))
-            day_pnl <- day_pnl + row_q$change[1] * pf$shares[i]
+            day_pnl <- day_pnl + convert_amount_to_base(
+              row_q$change[1] * pf$shares[i],
+              pf$currency[i],
+              qt
+            )
         }
       }
       clr <- if (day_pnl >= 0) "#00c853" else "#ff1744"
       bb_kpi("DAY P&L",
-             sprintf("%+.0f", day_pnl),
+             format_signed_base_currency(day_pnl, digits = 0),
              colour = clr)
     })
 
@@ -238,15 +267,23 @@ portfolioServer <- function(id, trigger_refresh) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
           if (nrow(row_q) > 0 && !is.na(row_q$price[1])) {
-            mv   <- row_q$price[1] * pf$shares[i]
-            cost <- pf$avg_cost[i] * pf$shares[i]
+            mv <- convert_amount_to_base(
+              row_q$price[1] * pf$shares[i],
+              pf$currency[i],
+              qt
+            )
+            cost <- convert_amount_to_base(
+              pf$avg_cost[i] * pf$shares[i],
+              pf$currency[i],
+              qt
+            )
             total_pnl <- total_pnl + (mv - cost)
           }
         }
       }
       clr <- if (total_pnl >= 0) "#00c853" else "#ff1744"
       bb_kpi("TOTAL P&L",
-             sprintf("%+.0f", total_pnl),
+             format_signed_base_currency(total_pnl, digits = 0),
              colour = clr)
     })
 
@@ -266,12 +303,21 @@ portfolioServer <- function(id, trigger_refresh) {
       if (!is.null(qt) && nrow(qt) > 0) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
-          if (nrow(row_q) > 0 && !is.na(row_q$price[1])) pf$value[i] <- row_q$price[1] * pf$shares[i]
+          if (nrow(row_q) > 0 && !is.na(row_q$price[1])) {
+            pf$value[i] <- convert_amount_to_base(
+              row_q$price[1] * pf$shares[i],
+              pf$currency[i],
+              qt
+            )
+          }
         }
       }
       pf$value[is.na(pf$value)] <- 0
       if (sum(pf$value, na.rm = TRUE) == 0) {
-        pf$value <- pf$shares * pf$avg_cost
+        pf$value <- mapply(convert_amount_to_base,
+                           pf$shares * pf$avg_cost,
+                           pf$currency,
+                           MoreArgs = list(quotes_df = qt))
       }
 
       agg <- aggregate(value ~ ticker, data = pf, FUN = sum)
@@ -297,6 +343,92 @@ portfolioServer <- function(id, trigger_refresh) {
           showlegend = FALSE,
           margin = list(l = 10, r = 10, t = 10, b = 10)
         )
+    })
+
+    # ── X-Ray: fetch holdings when toggle turns on or refresh button clicked ──
+    do_fetch_xray <- function() {
+      pf_tickers <- rv$portfolio$ticker
+      etf_tickers <- intersect(pf_tickers, names(ETF_ISINS))
+      if (length(etf_tickers) == 0) return()
+
+      showNotification("ETF X-Ray: Lade Positionen …",
+                       id = "xray_loading", duration = NULL, type = "message")
+      on.exit(removeNotification("xray_loading"))
+
+      cache <- list()
+      for (tkr in etf_tickers) {
+        hld  <- tryCatch(fetch_etf_holdings(tkr), error = function(e) NULL)
+        if (!is.null(hld) && nrow(hld) > 0) {
+          cache[[tkr]] <- hld
+        } else {
+          showNotification(paste0("X-Ray: Keine Daten für ", tkr),
+                           type = "warning", duration = 5)
+        }
+      }
+      rv$xray_holdings   <- cache
+      rv$xray_fetched_at <- Sys.time()
+    }
+
+    # Auto-fetch the first time the toggle is switched on
+    observeEvent(input$xray_on, {
+      req(input$xray_on)
+      if (length(rv$xray_holdings) == 0) do_fetch_xray()
+    })
+
+    # Manual refresh button
+    observeEvent(input$btn_refresh_xray, {
+      do_fetch_xray()
+    })
+
+    # ── X-Ray panel output ────────────────────────────────────
+    output$xray_table <- DT::renderDataTable({
+      req(input$xray_on)
+      tbl <- build_xray_table(rv$portfolio, rv$quotes, rv$xray_holdings)
+      if (is.null(tbl)) return(data.frame())
+      DT::datatable(tbl,
+        options = list(
+          dom        = "t",
+          pageLength = 50,
+          ordering   = TRUE,
+          order      = list(list(6, "desc")),
+          columnDefs = list(
+            list(className = "dt-right",
+                 targets   = c(2, 3, 4)),
+            list(visible = FALSE,
+                 targets = c(5, 6))
+          )
+        ),
+        rownames = FALSE,
+        class    = "cell-border compact"
+      )
+    })
+
+    output$xray_panel <- renderUI({
+      if (!isTRUE(input$xray_on)) return(NULL)
+
+      ts_str <- if (!is.null(rv$xray_fetched_at))
+        paste0("Stand: ", format(rv$xray_fetched_at, "%d.%m.%Y %H:%M"))
+      else "Noch nicht geladen"
+
+      tbl <- build_xray_table(rv$portfolio, rv$quotes, rv$xray_holdings)
+      if (is.null(tbl)) {
+        return(div(
+          style = "padding:10px; color:#f5a623; font-size:11px;",
+          icon("info-circle"),
+          " Keine ETF-Positionen oder Daten ausstehend."
+        ))
+      }
+
+      tagList(
+        hr(style = "border-color:#2a2a3e; margin:12px 0 8px;"),
+        div(style = "display:flex; align-items:center; margin-bottom:6px;",
+          tags$span(icon("search"), " ETF X-RAY LOOK-THROUGH",
+            style = "font-size:11px; letter-spacing:1px; color:#f5a623; font-weight:bold;"),
+          tags$span(ts_str,
+            style = "font-size:10px; color:#888; margin-left:8px;")
+        ),
+        DT::dataTableOutput(ns("xray_table"))
+      )
     })
 
     return(reactive(rv$portfolio))

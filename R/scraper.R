@@ -227,7 +227,174 @@ fetch_yahoo_fundamentals <- function(ticker) {
   )
 }
 
-# â”€â”€ Convenience: extract a labelled metric from the summary list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Alpha Vantage (via alphavantager package) ─────────────────────────────────
+#  Uses the alphavantager R package instead of raw HTTP requests.
+#  4 API calls per analysis: OVERVIEW + INCOME_STATEMENT + BALANCE_SHEET + CASH_FLOW
+#  Free tier: 25 req/day → ~6 full analyses/day.
+#  Key is read from env var alpha_vantage_api_key (set via .Renviron or system).
+
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# Safe wrapper: call alphavantager::av_get, return NULL on failure
+safe_av <- function(symbol, av_fun) {
+  tryCatch({
+    alphavantager::av_get(symbol = symbol, av_fun = av_fun)
+  }, error = function(e) {
+    message("Alpha Vantage (", av_fun, ") error: ", e$message)
+    NULL
+  })
+}
+
+# Parse a single field from the OVERVIEW tibble (1-row, wide format)
+av_ov_num <- function(ov, field) {
+  if (is.null(ov) || !field %in% names(ov)) return(NA_real_)
+  v <- ov[[field]][1]
+  if (is.null(v) || is.na(v) || v %in% c("None", "N/A", "-", "")) return(NA_real_)
+  suppressWarnings(as.numeric(v))
+}
+
+# Convert an annual-reports tibble (INCOME_STATEMENT etc.) column → data.frame(year, value)
+av_col_to_df <- function(tbl, col) {
+  if (is.null(tbl) || !col %in% names(tbl) || !"fiscalDateEnding" %in% names(tbl))
+    return(NULL)
+  df <- data.frame(
+    year  = as.integer(substr(as.character(tbl$fiscalDateEnding), 1, 4)),
+    value = suppressWarnings(as.numeric(tbl[[col]])),
+    stringsAsFactors = FALSE
+  )
+  df <- df[!is.na(df$year) & !is.na(df$value), , drop = FALSE]
+  if (nrow(df) == 0) return(NULL)
+  df[order(df$year), ]
+}
+
+#' Fetch fundamentals via Alpha Vantage (alphavantager package).
+#' Returns the same structure as fetch_yahoo_fundamentals().
+fetch_av_fundamentals <- function(ticker, api_key) {
+  ticker <- toupper(trimws(ticker))
+  if (nchar(trimws(api_key)) == 0) return(NULL)
+
+  # Set the API key for the alphavantager session
+  Sys.setenv(AV_API_KEY = api_key)
+  message("Fetching Alpha Vantage fundamentals for: ", ticker)
+
+  ov  <- safe_av(ticker, "OVERVIEW")
+  is_ <- safe_av(ticker, "INCOME_STATEMENT")
+  bs_ <- safe_av(ticker, "BALANCE_SHEET")
+  cf_ <- safe_av(ticker, "CASH_FLOW")
+
+  if (is.null(ov) || ncol(ov) < 3) {
+    message("Alpha Vantage OVERVIEW empty for ", ticker)
+    return(NULL)
+  }
+
+  # alphavantager returns annual + quarterly in one list; filter annuals
+  ar_is <- if (is.data.frame(is_)) is_ else NULL
+  ar_bs <- if (is.data.frame(bs_)) bs_ else NULL
+  ar_cf <- if (is.data.frame(cf_)) cf_ else NULL
+
+  rev_df   <- av_col_to_df(ar_is, "totalRevenue")
+  gp_df    <- av_col_to_df(ar_is, "grossProfit")
+  oi_df    <- av_col_to_df(ar_is, "operatingIncome")
+  ni_df    <- av_col_to_df(ar_is, "netIncome")
+  eps_df   <- av_col_to_df(ar_is, "dilutedEPS")
+
+  ta_df    <- av_col_to_df(ar_bs, "totalAssets")
+  tca_df   <- av_col_to_df(ar_bs, "totalCurrentAssets")
+  tcl_df   <- av_col_to_df(ar_bs, "totalCurrentLiabilities")
+  eq_df    <- av_col_to_df(ar_bs, "totalShareholderEquity")
+  ltd_df   <- av_col_to_df(ar_bs, "longTermDebt")
+
+  ocf_df   <- av_col_to_df(ar_cf, "operatingCashflow")
+  capex_df <- av_col_to_df(ar_cf, "capitalExpenditures")
+
+  fcf_df <- if (!is.null(ocf_df) && !is.null(capex_df)) {
+    m <- merge(ocf_df, capex_df, by = "year", suffixes = c("_o", "_c"))
+    if (nrow(m) > 0)
+      data.frame(year = m$year,
+                 value = m$value_o - abs(m$value_c),
+                 stringsAsFactors = FALSE)
+    else ocf_df
+  } else ocf_df
+
+  history <- list(
+    revenue       = rev_df,
+    eps_diluted   = eps_df,
+    fcf           = fcf_df,
+    gross_margin  = pct_series(gp_df, rev_df),
+    oper_margin   = pct_series(oi_df, rev_df),
+    net_margin    = pct_series(ni_df, rev_df),
+    roe           = pct_series(ni_df, eq_df),
+    roa           = pct_series(ni_df, ta_df),
+    debt_equity   = ratio_series(ltd_df, eq_df),
+    current_ratio = ratio_series(tca_df, tcl_df)
+  )
+
+  # Valuation ratios — current snapshot from OVERVIEW
+  pe_cur <- av_ov_num(ov, "PERatio")
+  pb_cur <- av_ov_num(ov, "PriceToBookRatio")
+  ps_cur <- av_ov_num(ov, "PriceToSalesRatioTTM")
+  ev_cur <- av_ov_num(ov, "EVToEBITDA")
+
+  make1 <- function(v) {
+    if (is.na(v)) return(NULL)
+    data.frame(year = as.integer(format(Sys.Date(), "%Y")),
+               value = v, stringsAsFactors = FALSE)
+  }
+  history$pe        <- make1(pe_cur)
+  history$pb        <- make1(pb_cur)
+  history$ps        <- make1(ps_cur)
+  history$ev_ebitda <- make1(ev_cur)
+  history <- Filter(Negate(is.null), history)
+
+  # Current price via Yahoo (free, no key needed)
+  cur_price <- fetch_current_price(ticker)
+  if (is.na(cur_price)) {
+    leps <- if (!is.null(eps_df) && nrow(eps_df) > 0) tail(eps_df$value, 1) else NA_real_
+    cur_price <- if (!is.na(leps) && !is.na(pe_cur)) round(leps * pe_cur, 2) else NA_real_
+  }
+
+  last_val     <- function(s) if (!is.null(s) && nrow(s) > 0) tail(s$value, 1) else NA_real_
+  fmt_num      <- function(x, d = 2) if (!is.na(x)) round(x, d) else "--"
+  fmt_pct_dec  <- function(x) if (!is.na(x)) paste0(round(x * 100, 2), "%") else "--"
+  fmt_pct_frac <- function(x) if (!is.na(x)) paste0(round(x,       2), "%") else "--"
+
+  roe_ttm <- av_ov_num(ov, "ReturnOnEquityTTM")
+  roa_ttm <- av_ov_num(ov, "ReturnOnAssetsTTM")
+  pm_ttm  <- av_ov_num(ov, "ProfitMargin")
+  om_ttm  <- av_ov_num(ov, "OperatingMarginTTM")
+  rev_ttm <- av_ov_num(ov, "RevenueTTM")
+  gp_ttm  <- av_ov_num(ov, "GrossProfitTTM")
+  gm_ttm  <- if (!is.na(rev_ttm) && rev_ttm > 0 && !is.na(gp_ttm))
+               gp_ttm / rev_ttm else NA_real_
+
+  summary_metrics <- list(
+    "Current Price"    = if (!is.na(cur_price)) paste0("$", round(cur_price, 2)) else "--",
+    "PE Ratio"         = fmt_num(pe_cur),
+    "PB Ratio"         = fmt_num(pb_cur),
+    "PS Ratio"         = fmt_num(ps_cur),
+    "EV/EBITDA"        = fmt_num(ev_cur),
+    "ROE (%)"          = fmt_pct_dec(roe_ttm),
+    "ROA (%)"          = fmt_pct_dec(roa_ttm),
+    "Net Margin (%)"   = fmt_pct_dec(pm_ttm),
+    "Gross Margin (%)" = fmt_pct_frac(gm_ttm * 100),
+    "Oper Margin (%)"  = fmt_pct_dec(om_ttm),
+    "Debt/Equity"      = fmt_num(last_val(history$debt_equity)),
+    "Current Ratio"    = fmt_num(last_val(history$current_ratio)),
+    "Revenue (TTM)"    = if (!is.na(rev_ttm)) format_large(rev_ttm) else "--",
+    "EPS (Diluted)"    = fmt_num(av_ov_num(ov, "EPS")),
+    "FCF"              = if (!is.na(last_val(history$fcf)))
+                           format_large(last_val(history$fcf)) else "--",
+    "Source"           = "Alpha Vantage"
+  )
+
+  list(
+    ticker    = ticker,
+    summary   = summary_metrics,
+    history   = history,
+    timestamp = Sys.time(),
+    demo_mode = FALSE
+  )
+}
 
 #' Search the summary list by partial label match (case-insensitive).
 get_metric <- function(summary_list, pattern, default = NA_character_) {

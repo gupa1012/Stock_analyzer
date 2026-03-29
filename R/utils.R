@@ -25,6 +25,79 @@ format_pct <- function(x) {
   paste0(round(x, 2), "%")
 }
 
+BASE_CURRENCY <- "EUR"
+
+fx_pair_ticker <- function(from_currency, to_currency = BASE_CURRENCY) {
+  from_currency <- toupper(trimws(as.character(from_currency)))
+  to_currency   <- toupper(trimws(as.character(to_currency)))
+  if (is.na(from_currency) || from_currency == "" || from_currency == to_currency)
+    return(NA_character_)
+  paste0(from_currency, to_currency, "=X")
+}
+
+required_fx_tickers <- function(currencies, to_currency = BASE_CURRENCY) {
+  tickers <- unique(vapply(currencies, fx_pair_ticker, character(1),
+                           to_currency = to_currency))
+  tickers[!is.na(tickers) & nchar(tickers) > 0]
+}
+
+convert_amount_to_base <- function(amount, from_currency, quotes_df,
+                                   to_currency = BASE_CURRENCY) {
+  if (is.na(amount)) return(NA_real_)
+
+  from_currency <- toupper(trimws(as.character(from_currency)))
+  to_currency   <- toupper(trimws(as.character(to_currency)))
+
+  if (is.na(from_currency) || from_currency == "" || from_currency == to_currency)
+    return(amount)
+
+  fx_ticker <- fx_pair_ticker(from_currency, to_currency)
+  if (is.na(fx_ticker) || is.null(quotes_df) || nrow(quotes_df) == 0) return(NA_real_)
+
+  row_q <- quotes_df[quotes_df$ticker == fx_ticker, ]
+  if (nrow(row_q) == 0 || is.na(row_q$price[1])) return(NA_real_)
+
+  amount * row_q$price[1]
+}
+
+format_base_currency <- function(x, digits = 0, na_value = "--",
+                                 currency_symbol = "EUR") {
+  if (!is.numeric(x)) {
+    return(rep(na_value, length(x)))
+  }
+
+  symbol <- switch(toupper(currency_symbol),
+    "EUR" = "\u20ac",
+    "USD" = "$",
+    currency_symbol
+  )
+
+  out <- rep(na_value, length(x))
+  ok <- !is.na(x)
+  out[ok] <- paste0(
+    symbol,
+    formatC(x[ok], format = "f", digits = digits, big.mark = ",")
+  )
+  out
+}
+
+format_signed_base_currency <- function(x, digits = 0, na_value = "--",
+                                        currency_symbol = "EUR") {
+  if (!is.numeric(x)) {
+    return(rep(na_value, length(x)))
+  }
+
+  out <- rep(na_value, length(x))
+  ok <- !is.na(x)
+  sign <- ifelse(x[ok] >= 0, "+", "-")
+  out[ok] <- paste0(
+    sign,
+    format_base_currency(abs(x[ok]), digits = digits,
+                         currency_symbol = currency_symbol)
+  )
+  out
+}
+
 # ── Colour helpers ─────────────────────────────────────────────────────────────
 
 #' Return green / red depending on the sign of a value

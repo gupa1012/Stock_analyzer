@@ -21,7 +21,7 @@ watchlistUI <- function(id) {
           fluidRow(
             column(3, textInput(ns("add_ticker"), "Ticker",
                                 placeholder = "MSFT")),
-            column(3, numericInput(ns("add_target"), "Target Price ($)",
+            column(3, numericInput(ns("add_target"), "Target Price (native)",
                                    value = NA, min = 0, step = 0.01)),
             column(4, textInput(ns("add_notes"), "Notes",
                                 placeholder = "Optional")),
@@ -81,7 +81,19 @@ watchlistServer <- function(id, trigger_refresh) {
         rv$quotes <- NULL
         return()
       }
-      rv$quotes <- tryCatch(fetch_quotes(wl$ticker), error = function(e) NULL)
+
+      qt <- tryCatch(fetch_quotes(wl$ticker), error = function(e) NULL)
+      fx_tickers <- if (!is.null(qt) && nrow(qt) > 0) {
+        required_fx_tickers(unique(qt$currency))
+      } else {
+        character(0)
+      }
+
+      rv$quotes <- if (length(fx_tickers) > 0) {
+        tryCatch(fetch_quotes(c(wl$ticker, fx_tickers)), error = function(e) qt)
+      } else {
+        qt
+      }
     })
 
     # ── Add ──
@@ -127,26 +139,36 @@ watchlistServer <- function(id, trigger_refresh) {
         for (i in seq_len(nrow(wl))) {
           row_q <- qt[qt$ticker == wl$ticker[i], ]
           if (nrow(row_q) > 0) {
-            wl$price[i]      <- row_q$price[1]
-            wl$change[i]     <- row_q$change[1]
+            wl$price[i]      <- convert_amount_to_base(row_q$price[1], row_q$currency[1], qt)
+            wl$change[i]     <- convert_amount_to_base(row_q$change[1], row_q$currency[1], qt)
             wl$change_pct[i] <- row_q$pct[1]
           }
         }
       }
 
+      wl$target_price_eur <- ifelse(
+        is.na(wl$target_price),
+        NA_real_,
+        vapply(seq_len(nrow(wl)), function(i) {
+          row_q <- if (!is.null(qt) && nrow(qt) > 0) qt[qt$ticker == wl$ticker[i], ] else NULL
+          if (is.null(row_q) || nrow(row_q) == 0) return(NA_real_)
+          convert_amount_to_base(wl$target_price[i], row_q$currency[1], qt)
+        }, numeric(1))
+      )
+
       display <- data.frame(
         Ticker   = wl$ticker,
         Price    = ifelse(is.na(wl$price), "--",
-                          sprintf("$%.2f", wl$price)),
+                          format_base_currency(wl$price, digits = 2)),
         Change   = ifelse(is.na(wl$change), "--",
-                          sprintf("%+.2f", wl$change)),
+                          format_signed_base_currency(wl$change, digits = 2)),
         `Chg %`  = ifelse(is.na(wl$change_pct), "--",
                           sprintf("%+.2f%%", wl$change_pct)),
-        Target   = ifelse(is.na(wl$target_price), "--",
-                          sprintf("$%.2f", wl$target_price)),
-        `vs Target` = ifelse(is.na(wl$price) | is.na(wl$target_price), "--",
+        Target   = ifelse(is.na(wl$target_price_eur), "--",
+                          format_base_currency(wl$target_price_eur, digits = 2)),
+        `vs Target` = ifelse(is.na(wl$price) | is.na(wl$target_price_eur), "--",
                              sprintf("%+.1f%%",
-                                     (wl$price / wl$target_price - 1) * 100)),
+                   (wl$price / wl$target_price_eur - 1) * 100)),
         Added    = wl$date_added,
         Notes    = ifelse(is.na(wl$notes), "", wl$notes),
         check.names = FALSE,
@@ -176,6 +198,27 @@ watchlistServer <- function(id, trigger_refresh) {
       hist <- fetch_history(tkr)
       if (nrow(hist) == 0) return(bb_empty_chart("No data"))
 
+      chart_title <- ""
+      if (!is.null(rv$quotes) && nrow(rv$quotes) > 0) {
+        row_q <- rv$quotes[rv$quotes$ticker == tkr, ]
+        if (nrow(row_q) > 0) {
+          fx_ticker <- fx_pair_ticker(row_q$currency[1])
+          if (!is.na(fx_ticker)) {
+            fx_hist <- fetch_history(fx_ticker)
+            if (nrow(fx_hist) > 0) {
+              names(fx_hist)[names(fx_hist) == "close"] <- "fx_close"
+              hist <- merge(hist, fx_hist, by = "date", all.x = TRUE)
+              hist$fx_close <- zoo::na.locf(hist$fx_close, na.rm = FALSE)
+              hist$fx_close <- zoo::na.locf(hist$fx_close, fromLast = TRUE, na.rm = FALSE)
+              hist$close <- hist$close * hist$fx_close
+              chart_title <- "EUR"
+            }
+          } else {
+            chart_title <- "EUR"
+          }
+        }
+      }
+
       plotly::plot_ly(hist, x = ~date, y = ~close,
         type = "scatter", mode = "lines",
         line = list(color = "#f5a623", width = 1.5),
@@ -194,7 +237,7 @@ watchlistServer <- function(id, trigger_refresh) {
             color = "#6c757d",
             gridcolor = "rgba(255,255,255,0.05)",
             zeroline = FALSE,
-            title = ""
+            title = chart_title
           ),
           margin = list(l = 40, r = 10, t = 10, b = 30),
           showlegend = FALSE

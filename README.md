@@ -11,10 +11,9 @@ A **Bloomberg-inspired** Shiny app for private portfolio management, watchlist t
 
 | Module | Description |
 |--------|-------------|
-| **Dashboard** | Portfolio overview with KPIs (total value, P&L, day change), allocation donut, and quick snapshot tables |
-| **Portfolio** | Add, edit, and remove positions. Live pricing via Yahoo Finance. P&L tracking per position and aggregate |
+| **Portfolio** | Combined start page with KPIs, add/remove position controls, allocation, a full holdings table, and an **ETF X-Ray** look-through panel. When X-Ray is on, the main holdings list expands with ETF-derived underlying exposures |
 | **Watchlist** | Track stocks you're watching with target prices, live quotes, and mini price charts |
-| **Analysis** | Deep fundamental analysis (15 metrics) via GuruFocus scraping or demo data — valuation, financials, quality tabs |
+| **Analysis** | Deep fundamental analysis (15+ metrics) via Alpha Vantage API or Yahoo Finance — valuation, financials, quality tabs, 5-year historicals. Demo mode included |
 | **Sentiment** | News sentiment scoring using Financial Times, Handelsblatt, and Reuters RSS feeds with a Loughran-McDonald–inspired financial lexicon |
 
 ---
@@ -50,9 +49,10 @@ Rscript -e "shiny::runApp('app.R', port = 3838, launch.browser = TRUE)"
 | Requirement | Notes |
 |-------------|-------|
 | R ≥ 4.0 | [Download R](https://cran.r-project.org/) |
-| Google Chrome | Only needed for GuruFocus analysis scraping |
-| `chromedriver` | Version must match Chrome; install via `wdman` or system package |
-| Internet | Required for Yahoo Finance quotes and RSS news feeds |
+| Internet | Required for Yahoo Finance quotes, Alpha Vantage API, and RSS news feeds |
+| Alpha Vantage API key | Optional but recommended. Free key at [alphavantage.co](https://www.alphavantage.co/support/#api-key) (25 req/day free). Set env var `alpha_vantage_api_key` |
+
+> **No Chrome or chromedriver required.** The previous GuruFocus/RSelenium scraper has been replaced with direct API calls.
 
 ---
 
@@ -64,14 +64,15 @@ Stock_analyzer/
 ├── install.R              # One-time package installer
 ├── R/
 │   ├── data_manager.R     # Portfolio & watchlist CSV persistence
-│   ├── market_data.R      # Yahoo Finance price fetching (quantmod)
+│   ├── market_data.R      # Yahoo Finance price + FX fetching (v8 chart API)
 │   ├── sentiment.R        # News sentiment analysis engine
-│   ├── mod_dashboard.R    # Dashboard module (overview)
-│   ├── mod_portfolio.R    # Portfolio management module
+│   ├── mod_dashboard.R    # Combined portfolio dashboard / home tab
+│   ├── mod_portfolio.R    # Legacy portfolio module (not the primary entry tab)
 │   ├── mod_watchlist.R    # Watchlist module
 │   ├── mod_analysis.R     # Fundamental analysis module
 │   ├── mod_sentiment.R    # Sentiment display module
-│   ├── scraper.R          # GuruFocus web scraper (RSelenium)
+│   ├── scraper.R          # Fundamental data fetcher (Alpha Vantage + Yahoo Finance)
+│   ├── etf_xray.R         # ETF look-through (X-Ray) — iShares CSV + justETF.com
 │   ├── charts.R           # Plotly chart builders
 │   ├── utils.R            # Formatting helpers & colour palette
 │   └── demo_data.R        # Demo data generator
@@ -89,10 +90,49 @@ Stock_analyzer/
 ## How It Works
 
 ### Portfolio & Watchlist
-Portfolio positions and watchlist entries are stored in local CSV files (`user_data/`). Live prices are fetched from Yahoo Finance via the `quantmod` package (with a direct API fallback).
+Portfolio positions and watchlist entries are stored in local CSV files (`user_data/`). Live prices and FX rates are fetched from the Yahoo Finance v8 chart endpoint, cached for 30 seconds, and reused across modules.
+
+### Base Currency
+Portfolio, watchlist table values, and X-Ray effective values are shown in **EUR**. For non-EUR securities the app fetches Yahoo FX pairs dynamically and converts price / market value / P&L into EUR.
+
+Currently required FX pairs for the sample portfolio:
+- `USDEUR=X`
+- `SGDEUR=X`
+
+### ETF X-Ray
+The main Portfolio tab has an **ETF X-Ray** toggle. When enabled:
+- the right-hand panel shows per-ETF look-through details
+- the main holdings table is expanded with ETF-derived underlying positions
+- if the same company appears in multiple ETFs, those look-through rows are aggregated into one combined exposure in the main holdings table
+
+The X-Ray table is sorted by **effective portfolio weight** so the biggest underlying exposures rise to the top.
+
+For `VGWD.DE`, the local Vanguard XLSX source is used as the primary source and contributes the **full holdings list** from the export file, not just the top 10.
+
+Data sources (dispatcher tries in this order per ETF):
+1. **Local XLSX** — manually exported holdings file dropped into `user_data/` (full fund). The newest file matching the ETF's glob pattern is used automatically, so simply drop a new file to refresh.
+2. **iShares CSV** — direct download from ishares.com (full fund, live). Used for SXR8, IS3Q, QDVW.
+3. **justETF.com** — SSR HTML scrape (public, no API key). Top-10 only. Fallback for XSMI and any new ETF without a file/CSV URL.
+
+Extend by adding entries to `ETF_ISINS` (required), `LOCAL_XLSX_PATTERNS` (local file), and/or `ISHARES_CSV_URLS` (iShares) in `R/etf_xray.R`.
+
+Currently mapped:
+| Ticker | Name | ISIN | Source |
+|--------|------|------|--------|
+| VGWD.DE | Vanguard FTSE AW High Dividend Yield UCITS ETF | IE00B8GKDB10 | Local XLSX → justETF |
+| XSMI.DE | Xtrackers MSCI Switzerland UCITS ETF | LU0274221281 | justETF |
+| SXR8.DE | iShares Core S&P 500 UCITS ETF (Acc) | IE00B5BMR087 | iShares CSV |
+| IS3Q.DE | iShares Edge MSCI World Quality Factor UCITS ETF (Acc) | IE00BP3QZ601 | iShares CSV |
+| QDVW.DE | iShares MSCI World Quality Dividend ESG UCITS ETF (Dist) | IE00BYYHSQ67 | iShares CSV |
 
 ### Fundamental Analysis
-The analysis module uses RSelenium + rvest to scrape 15 fundamental metrics from GuruFocus.com. A demo mode generates realistic sample data when live scraping is unavailable.
+The analysis module fetches fundamental data from two sources (in priority order):
+
+1. **Alpha Vantage** (if API key is set via env var `alpha_vantage_api_key`) — 4 API calls per analysis (`OVERVIEW`, `INCOME_STATEMENT`, `BALANCE_SHEET`, `CASH_FLOW`). Provides P/S ratio, EV/EBITDA, TTM margins, and up to 5 years of annual historicals. Uses the `alphavantager` R package.
+2. **Yahoo Finance** (fallback, no key needed) — fetches via the unofficial JSON API. Covers revenue, EPS, FCF, P/E, P/B, margins, ROE/ROA, debt ratios.
+3. **Demo mode** — generates realistic synthetic data when both live sources fail.
+
+No browser, Chrome, or chromedriver required.
 
 ### News Sentiment
 The sentiment engine fetches RSS feeds from:
@@ -108,7 +148,9 @@ Articles are scored using a curated financial sentiment lexicon (Loughran-McDona
 ## Notes
 
 - Portfolio data is stored locally — no cloud sync.
-- GuruFocus scraping requires Chrome/chromedriver.
+- No Chrome/chromedriver needed — Selenium dependency fully removed.
+- Alpha Vantage free tier: 25 requests/day (~6 full analyses/day).
+- Without an API key the app automatically falls back to Yahoo Finance.
 - Sentiment analysis uses free RSS feeds — no API keys needed.
-- Rate limiting is applied to both GuruFocus (0.8 s) and Yahoo Finance (0.3 s) requests.
+- Portfolio and watchlist quotes are cached for 30 seconds to avoid duplicate requests across tabs.
 - The app is designed for personal/research use.

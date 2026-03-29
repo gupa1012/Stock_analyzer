@@ -62,6 +62,36 @@ analysisUI <- function(id) {
             column(1, div(style = "margin-top: 30px;",
               uiOutput(ns("status_badge"))
             ))
+          ),
+          # ── API Key row ──
+          fluidRow(
+            column(5,
+              div(style = "padding-top: 6px;",
+                passwordInput(
+                  ns("av_api_key"),
+                  label = tags$span(
+                    icon("key", style = "color:#f5a623;"),
+                    " Alpha Vantage API Key"
+                  ),
+                  value       = Sys.getenv("alpha_vantage_api_key"),
+                  placeholder = "Paste key for richer data (optional)"
+                )
+              )
+            ),
+            column(7,
+              div(style = "padding-top: 32px; color:#6c757d; font-size:12px;",
+                icon("info-circle"), " With key: live fundamental data (P/S, EV/EBITDA, 5-year historicals).",
+                tags$br(),
+                "Without key: Yahoo Finance fallback.  ",
+                tags$a(
+                  href   = "https://www.alphavantage.co/support/#api-key",
+                  target = "_blank",
+                  style  = "color:#f5a623;",
+                  icon("external-link-alt"), " Get free key"
+                ),
+                " (25 req/day free → ~6 analyses/day)."
+              )
+            )
           )
         )
       )
@@ -199,22 +229,45 @@ analysisServer <- function(id) {
       rv$error   <- NULL
 
       withProgress(message = paste("Analyzing", ticker, "..."), {
-        result <- tryCatch(
-          fetch_yahoo_fundamentals(ticker),
-          error = function(e) {
-            rv$error <- e$message
-            NULL
+        api_key <- trimws(input$av_api_key %||% "")
+
+        result <- NULL
+
+        # 1. Try Alpha Vantage if the user supplied a key
+        if (nchar(api_key) > 0) {
+          setProgress(0.2, detail = "Calling Alpha Vantage …")
+          result <- tryCatch(
+            fetch_av_fundamentals(ticker, api_key),
+            error = function(e) { rv$error <- e$message; NULL }
+          )
+          if (!is.null(result)) {
+            setProgress(0.9, detail = "Done.")
+          } else {
+            showNotification(
+              paste0("Alpha Vantage fetch failed for ", ticker,
+                     " – trying Yahoo Finance …"),
+              type = "warning", duration = 6
+            )
           }
-        )
+        }
+
+        # 2. Fall back to Yahoo Finance
+        if (is.null(result)) {
+          setProgress(0.4, detail = "Calling Yahoo Finance …")
+          result <- tryCatch(
+            fetch_yahoo_fundamentals(ticker),
+            error = function(e) { rv$error <- e$message; NULL }
+          )
+        }
+
         if (!is.null(result)) {
           rv$data <- result
         } else {
           rv$data <- generate_demo_data(ticker)
           rv$error <- NULL
           showNotification(
-            paste0("Yahoo Finance fetch failed – showing demo data for ", ticker, "."),
-            type     = "warning",
-            duration = 8
+            paste0("All live sources failed – showing demo data for ", ticker, "."),
+            type = "warning", duration = 8
           )
         }
       })

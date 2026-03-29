@@ -22,6 +22,7 @@ source("R/demo_data.R")
 source("R/data_manager.R")
 source("R/market_data.R")
 source("R/sentiment.R")
+source("R/etf_xray.R")
 source("R/mod_dashboard.R")
 source("R/mod_portfolio.R")
 source("R/mod_watchlist.R")
@@ -52,9 +53,7 @@ ui <- dashboardPage(
     width = 220,
     sidebarMenu(
       id = "sidebar_menu",
-      menuItem("Dashboard",  tabName = "tab_dashboard",
-               icon = icon("tachometer-alt")),
-      menuItem("Portfolio",  tabName = "tab_portfolio",
+      menuItem("Portfolio",  tabName = "tab_dashboard",
                icon = icon("briefcase")),
       menuItem("Watchlist",  tabName = "tab_watchlist",
                icon = icon("eye")),
@@ -90,7 +89,6 @@ ui <- dashboardPage(
 
     tabItems(
       tabItem(tabName = "tab_dashboard",  dashboardTabUI("dash")),
-      tabItem(tabName = "tab_portfolio",  portfolioUI("portfolio")),
       tabItem(tabName = "tab_watchlist",  watchlistUI("watchlist")),
       tabItem(tabName = "tab_analysis",   analysisUI("analysis")),
       tabItem(tabName = "tab_sentiment",  sentimentUI("sentiment"))
@@ -117,17 +115,12 @@ server <- function(input, output, session) {
   refresh_trigger <- reactiveVal(0)
 
   # ── Module servers ──
-  dash_refresh <- dashboardTabServer("dash")
-  pf_data      <- portfolioServer("portfolio", trigger_refresh = refresh_trigger)
-  wl_data      <- watchlistServer("watchlist", trigger_refresh = refresh_trigger)
+  dash_data <- dashboardTabServer("dash")
+  wl_data   <- watchlistServer("watchlist", trigger_refresh = refresh_trigger)
   analysisServer("analysis")
   sentimentServer("sentiment")
 
-  # When portfolio or watchlist changes, bump the refresh trigger
-  observe({
-    pf_data()
-    isolate(refresh_trigger(refresh_trigger() + 1))
-  })
+  # When watchlist changes, bump the refresh trigger
   observe({
     wl_data()
     isolate(refresh_trigger(refresh_trigger() + 1))
