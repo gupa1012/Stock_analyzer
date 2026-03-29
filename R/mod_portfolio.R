@@ -237,7 +237,7 @@ portfolioServer <- function(id, trigger_refresh) {
       if (nrow(pf) > 0 && !is.null(qt) && nrow(qt) > 0) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
-          if (nrow(row_q) > 0) {
+          if (nrow(row_q) > 0 && !is.na(row_q$price[1])) {
             mv   <- row_q$price[1] * pf$shares[i]
             cost <- pf$avg_cost[i] * pf$shares[i]
             total_pnl <- total_pnl + (mv - cost)
@@ -266,10 +266,11 @@ portfolioServer <- function(id, trigger_refresh) {
       if (!is.null(qt) && nrow(qt) > 0) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
-          if (nrow(row_q) > 0) pf$value[i] <- row_q$price[1] * pf$shares[i]
+          if (nrow(row_q) > 0 && !is.na(row_q$price[1])) pf$value[i] <- row_q$price[1] * pf$shares[i]
         }
       }
-      if (sum(pf$value) == 0) {
+      pf$value[is.na(pf$value)] <- 0
+      if (sum(pf$value, na.rm = TRUE) == 0) {
         pf$value <- pf$shares * pf$avg_cost
       }
 

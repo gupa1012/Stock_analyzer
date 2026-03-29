@@ -183,9 +183,10 @@ dashboardTabServer <- function(id) {
       if (!is.null(qt) && nrow(qt) > 0) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
-          if (nrow(row_q) > 0) pf$value[i] <- row_q$price[1] * pf$shares[i]
+          if (nrow(row_q) > 0 && !is.na(row_q$price[1])) pf$value[i] <- row_q$price[1] * pf$shares[i]
         }
       }
+      pf$value[is.na(pf$value)] <- 0
       agg <- aggregate(value ~ ticker, data = pf, FUN = sum)
       agg <- agg[order(-agg$value), ]
 
@@ -220,7 +221,7 @@ dashboardTabServer <- function(id) {
       if (!is.null(qt) && nrow(qt) > 0) {
         for (i in seq_len(nrow(pf))) {
           row_q <- qt[qt$ticker == pf$ticker[i], ]
-          if (nrow(row_q) > 0) {
+          if (nrow(row_q) > 0 && !is.na(row_q$price[1])) {
             mv   <- row_q$price[1] * pf$shares[i]
             cost <- pf$avg_cost[i] * pf$shares[i]
             pf$pnl[i] <- mv - cost
@@ -263,7 +264,7 @@ compute_portfolio_value <- function(pf, qt) {
   if (!is.null(qt) && nrow(qt) > 0) {
     for (i in seq_len(nrow(pf))) {
       row_q <- qt[qt$ticker == pf$ticker[i], ]
-      if (nrow(row_q) > 0) total <- total + row_q$price[1] * pf$shares[i]
+      if (nrow(row_q) > 0 && !is.na(row_q$price[1])) total <- total + row_q$price[1] * pf$shares[i]
       else total <- total + pf$avg_cost[i] * pf$shares[i]
     }
   } else {
@@ -288,7 +289,7 @@ compute_total_pnl <- function(pf, qt) {
   if (nrow(pf) == 0 || is.null(qt)) return(pnl)
   for (i in seq_len(nrow(pf))) {
     row_q <- qt[qt$ticker == pf$ticker[i], ]
-    if (nrow(row_q) > 0) {
+    if (nrow(row_q) > 0 && !is.na(row_q$price[1])) {
       mv   <- row_q$price[1] * pf$shares[i]
       cost <- pf$avg_cost[i] * pf$shares[i]
       pnl  <- pnl + (mv - cost)

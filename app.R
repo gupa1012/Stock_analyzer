@@ -28,27 +28,6 @@ source("R/mod_watchlist.R")
 source("R/mod_analysis.R")
 source("R/mod_sentiment.R")
 
-# ── Bloomberg-style KPI card builder ─────────────────────────
-bb_kpi <- function(title, value, subtitle = NULL, colour = "#f5a623") {
-  div(class = "bb-kpi",
-    div(class = "bb-kpi-title", title),
-    div(class = "bb-kpi-value", style = paste0("color:", colour, ";"), value),
-    if (!is.null(subtitle)) div(class = "bb-kpi-subtitle", subtitle)
-  )
-}
-
-# ── Empty chart placeholder ──────────────────────────────────
-bb_empty_chart <- function(msg = "No data") {
-  plotly::plot_ly() |>
-    plotly::layout(
-      title = list(text = msg, font = list(color = "#6c757d", size = 14)),
-      paper_bgcolor = "transparent",
-      plot_bgcolor  = "transparent",
-      xaxis = list(visible = FALSE),
-      yaxis = list(visible = FALSE)
-    )
-}
-
 # ── UI ───────────────────────────────────────────────────────
 ui <- dashboardPage(
   skin = "black",

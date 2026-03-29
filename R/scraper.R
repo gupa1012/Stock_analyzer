@@ -1,295 +1,247 @@
 # R/scraper.R
-# GuruFocus scraping functions using RSelenium + rvest
+# Fundamental data via Yahoo Finance JSON API â€“ no Selenium required.
+# Endpoints used:
+#   v8/finance/chart/{ticker}           â€“ current price & metadata
+#   ws/fundamentals-timeseries/v1/â€¦     â€“ annual history (4 most recent years)
 
-library(rvest)
-library(dplyr)
-library(stringr)
 library(jsonlite)
+library(httr)
 
-RSELENIUM_AVAILABLE <- requireNamespace("RSelenium", quietly = TRUE)
-if (RSELENIUM_AVAILABLE) library(RSelenium)
+YF_UA <- paste0(
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ",
+  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+)
 
-# ── Selenium session management ────────────────────────────────────────────────
+# â”€â”€ HTTP helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-#' Start a headless Chrome Selenium driver.
-#' Returns a list with $driver (remoteDriver) and $server (wdman server or NULL).
-#' Raises an error with a helpful message if RSelenium is not installed.
-start_selenium_driver <- function(port = 4567L) {
-  if (!RSELENIUM_AVAILABLE) {
-    stop(
-      "The 'RSelenium' package is not installed. ",
-      "Please run: install.packages('RSelenium') ",
-      "and ensure Google Chrome + chromedriver are installed on this machine."
-    )
-  }
-  options <- list(
-    chromeOptions = list(
-      args = c(
-        "--headless",
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--window-size=1920,1080",
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-      )
-    )
-  )
-
+yf_get <- function(url) {
   tryCatch({
-    rD <- rsDriver(
-      browser     = "chrome",
-      port        = port,
-      verbose     = FALSE,
-      extraCapabilities = options,
-      chromever   = NULL   # use system chromedriver
-    )
-    list(driver = rD[["client"]], server = rD[["server"]])
-  }, error = function(e) {
-    # Fallback: connect to an already-running Selenium / chromedriver
-    message("rsDriver failed (", conditionMessage(e), "); trying direct connection...")
-    remDr <- tryCatch(
-      remoteDriver(
-        remoteServerAddr = "localhost",
-        port             = 9515L,
-        browserName      = "chrome"
+    resp <- httr::GET(
+      url,
+      httr::add_headers(
+        "User-Agent" = YF_UA,
+        "Accept"     = "application/json, */*"
       ),
-      error = function(e2) stop("Cannot start or connect to a Chrome WebDriver: ", conditionMessage(e2))
+      httr::timeout(20)
     )
-    remDr$open(silent = TRUE)
-    list(driver = remDr, server = NULL)
-  })
-}
-
-#' Stop and clean up a Selenium session returned by start_selenium_driver().
-stop_selenium_driver <- function(sel) {
-  tryCatch({
-    if (!is.null(sel$driver))  sel$driver$close()
-    if (!is.null(sel$server))  sel$server$stop()
+    if (httr::status_code(resp) != 200) return(NULL)
+    jsonlite::fromJSON(
+      httr::content(resp, "text", encoding = "UTF-8"),
+      simplifyDataFrame = FALSE
+    )
   }, error = function(e) NULL)
 }
 
-# ── GuruFocus helpers ──────────────────────────────────────────────────────────
+# â”€â”€ Current price via v8 chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-GURUFOCUS_BASE <- "https://www.gurufocus.com"
+fetch_current_price <- function(ticker) {
+  url <- paste0(
+    "https://query1.finance.yahoo.com/v8/finance/chart/",
+    utils::URLencode(ticker),
+    "?interval=1d&range=1d"
+  )
+  js <- yf_get(url)
+  if (is.null(js)) return(NA_real_)
+  tryCatch(
+    as.numeric(js$chart$result[[1]]$meta$regularMarketPrice),
+    error = function(e) NA_real_
+  )
+}
 
-#' Navigate to a URL and wait for an element (by CSS selector) to appear.
-gf_navigate <- function(driver, url, wait_selector = NULL, timeout = 15) {
-  driver$navigate(url)
-  Sys.sleep(2)
+# â”€â”€ Annual time-series â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  if (!is.null(wait_selector)) {
-    start <- proc.time()["elapsed"]
-    repeat {
-      els <- tryCatch(
-        driver$findElements(using = "css selector", value = wait_selector),
-        error = function(e) list()
-      )
-      if (length(els) > 0) break
-      if ((proc.time()["elapsed"] - start) > timeout) break
-      Sys.sleep(1)
-    }
+TS_TYPES <- c(
+  "annualTotalRevenue",
+  "annualDilutedEPS",
+  "annualFreeCashFlow",
+  "annualNetIncome",
+  "annualGrossProfit",
+  "annualOperatingIncome",
+  "annualPeRatio",
+  "annualPriceToBook",
+  "annualReturnOnEquity",
+  "annualReturnOnAssets",
+  "annualCurrentRatio",
+  "annualDebtToEquity",
+  "annualStockholdersEquity",
+  "annualTotalAssets",
+  "annualCurrentAssets",
+  "annualCurrentLiabilities",
+  "annualLongTermDebt"
+)
+
+fetch_timeseries <- function(ticker) {
+  url <- paste0(
+    "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/",
+    utils::URLencode(ticker),
+    "?type=", paste(TS_TYPES, collapse = ","),
+    "&period1=946684800",
+    "&period2=", as.integer(Sys.time()) + 86400
+  )
+  js <- yf_get(url)
+  if (is.null(js)) return(list())
+
+  results <- list()
+  for (item in js$timeseries$result) {
+    nms <- names(item)
+    sn  <- nms[length(nms)]
+    rows <- item[[sn]]
+    if (!is.list(rows) || length(rows) == 0) next
+    years <- vapply(rows, function(x)
+      as.integer(format(as.Date(x$asOfDate), "%Y")), integer(1))
+    values <- vapply(rows, function(x) {
+      rv <- x$reportedValue
+      if (is.list(rv)) as.numeric(rv$raw) else as.numeric(rv)
+    }, numeric(1))
+    df <- data.frame(year = years, value = values, stringsAsFactors = FALSE)
+    df <- df[!is.na(df$value), ]
+    if (nrow(df) > 0) results[[sn]] <- df[order(df$year), ]
   }
-  Sys.sleep(1)
+  results
 }
 
-#' Get the rendered page source as an rvest html_document.
-get_page <- function(driver) {
-  src <- driver$getPageSource()[[1]]
-  read_html(src)
+# â”€â”€ Derived series helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+pct_series <- function(numer_df, denom_df) {
+  if (is.null(numer_df) || is.null(denom_df)) return(NULL)
+  m <- merge(numer_df, denom_df, by = "year", suffixes = c("_n", "_d"))
+  if (nrow(m) == 0) return(NULL)
+  data.frame(year = m$year,
+             value = round(m$value_n / m$value_d * 100, 4),
+             stringsAsFactors = FALSE)
 }
 
-# ── Parse a GuruFocus "term" history table ─────────────────────────────────────
+ratio_series <- function(numer_df, denom_df) {
+  if (is.null(numer_df) || is.null(denom_df)) return(NULL)
+  m <- merge(numer_df, denom_df, by = "year", suffixes = c("_n", "_d"))
+  if (nrow(m) == 0) return(NULL)
+  data.frame(year = m$year,
+             value = round(m$value_n / m$value_d, 4),
+             stringsAsFactors = FALSE)
+}
 
-#' Scrape historical annual data from a GuruFocus term page.
-#' Returns a data.frame with columns: year (numeric), value (numeric).
-scrape_term_history <- function(driver, ticker, term) {
-  url <- paste0(GURUFOCUS_BASE, "/term/", term, "/", ticker)
-  gf_navigate(driver, url, wait_selector = ".t-body, table", timeout = 12)
-  page <- get_page(driver)
-
-  df <- tryCatch({
-    # GuruFocus term pages render data in a Vue/Element-UI table.
-    # Try extracting the JSON embedded in a <script> tag first.
-    scripts <- html_nodes(page, "script") %>% html_text()
-    json_hit <- NA
-
-    for (sc in scripts) {
-      if (grepl('"annualValue"', sc) || grepl('"annual"', sc)) {
-        # locate the JSON blob
-        m <- regmatches(sc, regexpr('\\{[^{}]*"annual[^}]*\\}', sc, perl = TRUE))
-        if (length(m) > 0) {
-          json_hit <- tryCatch(fromJSON(m[1]), error = function(e) NA)
-          break
-        }
-      }
-    }
-
-    # Fallback: parse the visible data table
-    tables <- html_nodes(page, "table")
-    if (length(tables) == 0) return(NULL)
-
-    best <- NULL
-    for (tbl in tables) {
-      rows <- html_nodes(tbl, "tr")
-      if (length(rows) < 3) next
-      cells <- html_nodes(rows[[2]], "td")
-      if (length(cells) < 2) next
-      # Check first column looks like a year
-      first <- trimws(html_text(cells[[1]]))
-      if (grepl("^(19|20)\\d{2}", first)) {
-        best <- tbl
-        break
-      }
-    }
-    if (is.null(best)) return(NULL)
-
-    rows   <- html_nodes(best, "tr")
-    parsed <- lapply(rows, function(r) {
-      cells <- html_nodes(r, "td")
-      if (length(cells) < 2) return(NULL)
-      yr  <- trimws(html_text(cells[[1]]))
-      val <- trimws(html_text(cells[[2]]))
-      if (!grepl("^(19|20)\\d{2}", yr)) return(NULL)
-      data.frame(year = as.integer(substr(yr, 1, 4)),
-                 value = parse_numeric_str(val),
-                 stringsAsFactors = FALSE)
-    })
-    do.call(rbind, Filter(Negate(is.null), parsed))
-  }, error = function(e) NULL)
-
-  if (is.null(df) || nrow(df) == 0) return(NULL)
-  df <- df[order(df$year), ]
-  df <- df[!is.na(df$value), ]
+scale_pct <- function(df) {
+  if (is.null(df)) return(NULL)
+  df$value <- df$value * 100
   df
 }
 
-# ── Parse the GuruFocus summary page ──────────────────────────────────────────
+# â”€â”€ Main fetch entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-#' Extract the key-statistics grid from the GuruFocus summary page.
-#' Returns a named list of current values.
-scrape_summary_metrics <- function(driver, ticker) {
-  url <- paste0(GURUFOCUS_BASE, "/term/summary/", ticker)
-  gf_navigate(driver, url, wait_selector = ".t-body, .summary-table, table", timeout = 15)
-  page <- get_page(driver)
-
-  result <- list()
-
-  # Strategy 1 – look for element-ui table rows (".el-table__row td .cell")
-  rows <- html_nodes(page, ".el-table__row")
-  if (length(rows) > 0) {
-    for (r in rows) {
-      cells <- html_nodes(r, ".cell")
-      if (length(cells) >= 2) {
-        label <- trimws(html_text(cells[[1]]))
-        value <- trimws(html_text(cells[[2]]))
-        if (nchar(label) > 0 && nchar(value) > 0)
-          result[[label]] <- value
-      }
-    }
-  }
-
-  # Strategy 2 – plain <table> rows
-  if (length(result) == 0) {
-    for (tbl in html_nodes(page, "table")) {
-      for (r in html_nodes(tbl, "tr")) {
-        cells <- html_nodes(r, "td")
-        if (length(cells) >= 2) {
-          label <- trimws(html_text(cells[[1]]))
-          value <- trimws(html_text(cells[[2]]))
-          if (nchar(label) > 0 && nchar(value) > 0)
-            result[[label]] <- value
-        }
-      }
-    }
-  }
-
-  # Strategy 3 – look for <div class="t-body"> or similar
-  if (length(result) == 0) {
-    rows <- html_nodes(page, ".t-body .el-col, .t-body div")
-    for (i in seq_along(rows)) {
-      txt <- trimws(html_text(rows[[i]]))
-      if (nchar(txt) > 0 && i < length(rows)) {
-        next_txt <- trimws(html_text(rows[[i + 1]]))
-        if (nchar(next_txt) > 0)
-          result[[txt]] <- next_txt
-      }
-    }
-  }
-
-  result
-}
-
-# ── Main scraping entry point ──────────────────────────────────────────────────
-
-#' Fetch all data for a given ticker from GuruFocus.
-#' Returns a named list with:
-#'   $summary   – named list of current metric strings
-#'   $history   – named list of data.frames (one per metric)
-#'   $ticker    – the ticker
-#'   $timestamp – POSIXct when data was fetched
-scrape_gurufocus <- function(driver, ticker) {
+#' Fetch fundamental data for a ticker from Yahoo Finance (no Selenium needed).
+#' Returns the same structure expected by the analysis module:
+#'   $ticker, $summary (named list), $history (named list of data.frames),
+#'   $timestamp, $demo_mode
+fetch_yahoo_fundamentals <- function(ticker) {
   ticker <- toupper(trimws(ticker))
-  message("Scraping GuruFocus for: ", ticker)
+  message("Fetching Yahoo Finance data for: ", ticker)
 
-  # --- Summary metrics ---
-  summary_metrics <- tryCatch(
-    scrape_summary_metrics(driver, ticker),
-    error = function(e) {
-      message("Summary scrape error: ", e$message)
-      list()
-    }
-  )
+  ts    <- fetch_timeseries(ticker)
+  price <- fetch_current_price(ticker)
 
-  # --- Historical term data ---
-  terms <- c(
-    pe            = "pe",
-    pb            = "pb",
-    ps            = "ps",
-    ev_ebitda     = "ev2ebitda",
-    revenue       = "revenue",
-    eps_diluted   = "eps_diluted",
-    fcf           = "fcf",
-    roe           = "roe",
-    roa           = "roa",
-    roic          = "roic",
-    gross_margin  = "grossprofitmargin",
-    oper_margin   = "operatingmargin",
-    net_margin    = "netmargin",
-    debt_equity   = "deb2equity",
-    current_ratio = "current_ratio"
-  )
-
+  # Build named history list
   history <- list()
-  for (nm in names(terms)) {
-    Sys.sleep(0.8)   # polite delay
-    df <- tryCatch(
-      scrape_term_history(driver, ticker, terms[[nm]]),
-      error = function(e) { message(nm, " history error: ", e$message); NULL }
-    )
-    if (!is.null(df) && nrow(df) > 0) history[[nm]] <- df
+  history$revenue      <- ts[["annualTotalRevenue"]]
+  history$eps_diluted  <- ts[["annualDilutedEPS"]]
+  history$fcf          <- ts[["annualFreeCashFlow"]]
+  history$pe           <- ts[["annualPeRatio"]]
+  history$pb           <- ts[["annualPriceToBook"]]
+
+  # Margins â€“ computed from IS items
+  history$gross_margin <- pct_series(ts[["annualGrossProfit"]],
+                                     ts[["annualTotalRevenue"]])
+  history$oper_margin  <- pct_series(ts[["annualOperatingIncome"]],
+                                     ts[["annualTotalRevenue"]])
+  history$net_margin   <- pct_series(ts[["annualNetIncome"]],
+                                     ts[["annualTotalRevenue"]])
+
+  # ROE / ROA â€“ timeseries values are 0â€“1 fractions; scale to %
+  history$roe   <- if (!is.null(ts[["annualReturnOnEquity"]]))
+    scale_pct(ts[["annualReturnOnEquity"]])
+  else
+    pct_series(ts[["annualNetIncome"]], ts[["annualStockholdersEquity"]])
+
+  history$roa   <- if (!is.null(ts[["annualReturnOnAssets"]]))
+    scale_pct(ts[["annualReturnOnAssets"]])
+  else
+    pct_series(ts[["annualNetIncome"]], ts[["annualTotalAssets"]])
+
+  history$debt_equity <- if (!is.null(ts[["annualDebtToEquity"]]))
+    ts[["annualDebtToEquity"]]
+  else
+    ratio_series(ts[["annualLongTermDebt"]], ts[["annualStockholdersEquity"]])
+
+  history$current_ratio <- if (!is.null(ts[["annualCurrentRatio"]]))
+    ts[["annualCurrentRatio"]]
+  else
+    ratio_series(ts[["annualCurrentAssets"]], ts[["annualCurrentLiabilities"]])
+
+  # Not available in free Yahoo timeseries
+  history$roic     <- NULL
+  history$ev_ebitda <- NULL
+  history$ps        <- NULL
+
+  history <- Filter(Negate(is.null), history)
+
+  # Summary â€“ most-recent value from each series + current price
+  last_val <- function(series) {
+    if (is.null(series) || nrow(series) == 0) return(NA_real_)
+    series$value[nrow(series)]
   }
+
+  last_eps <- last_val(history$eps_diluted)
+  last_pe  <- last_val(history$pe)
+  cur_price <- if (!is.na(price)) price else
+    if (!is.na(last_eps) && !is.na(last_pe)) round(last_eps * last_pe, 2) else NA_real_
+
+  fmt_num <- function(x, digits = 2) if (!is.na(x)) round(x, digits) else "--"
+  fmt_pct <- function(x) if (!is.na(x)) paste0(round(x, 2), "%") else "--"
+
+  summary_metrics <- list(
+    "Current Price"    = if (!is.na(cur_price)) paste0("$", round(cur_price, 2)) else "--",
+    "PE Ratio"         = fmt_num(last_pe),
+    "PB Ratio"         = fmt_num(last_val(history$pb)),
+    "PS Ratio"         = "--",
+    "EV/EBITDA"        = "--",
+    "ROE (%)"          = fmt_num(last_val(history$roe)),
+    "ROA (%)"          = fmt_num(last_val(history$roa)),
+    "Net Margin (%)"   = fmt_num(last_val(history$net_margin)),
+    "Gross Margin (%)" = fmt_num(last_val(history$gross_margin)),
+    "Oper Margin (%)"  = fmt_num(last_val(history$oper_margin)),
+    "Debt/Equity"      = fmt_num(last_val(history$debt_equity)),
+    "Current Ratio"    = fmt_num(last_val(history$current_ratio)),
+    "Revenue (TTM)"    = if (!is.na(last_val(history$revenue)))
+      format_large(last_val(history$revenue)) else "--",
+    "EPS (Diluted)"    = fmt_num(last_eps),
+    "FCF"              = if (!is.na(last_val(history$fcf)))
+      format_large(last_val(history$fcf)) else "--",
+    "Source"           = "Yahoo Finance"
+  )
 
   list(
     ticker    = ticker,
     summary   = summary_metrics,
     history   = history,
-    timestamp = Sys.time()
+    timestamp = Sys.time(),
+    demo_mode = FALSE
   )
 }
 
-# ── Convenience: extract a labelled metric from the summary list ───────────────
+# â”€â”€ Convenience: extract a labelled metric from the summary list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #' Search the summary list by partial label match (case-insensitive).
 get_metric <- function(summary_list, pattern, default = NA_character_) {
   if (length(summary_list) == 0) return(default)
   idx <- grep(pattern, names(summary_list), ignore.case = TRUE, value = TRUE)
   if (length(idx) == 0) return(default)
-  summary_list[[idx[[1]]]]
+  val <- as.character(summary_list[[idx[[1]]]])
+  if (is.na(val) || val == "--") return(default)
+  val
 }
 
-#' As above but parse to numeric.
+#' As above but coerce to numeric.
 get_metric_num <- function(summary_list, pattern, default = NA_real_) {
   val <- get_metric(summary_list, pattern, default = NA_character_)
-  if (is.na(val)) return(default)
+  if (is.null(val) || is.na(val)) return(default)
   parse_numeric_str(val)
 }

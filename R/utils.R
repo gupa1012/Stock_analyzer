@@ -75,6 +75,32 @@ safe_numeric <- function(x) {
   vapply(x, parse_numeric_str, numeric(1), USE.NAMES = FALSE)
 }
 
+# ── Bloomberg-style UI helpers ───────────────────────────────────────────────
+
+#' Bloomberg-style KPI card
+bb_kpi <- function(title, value, subtitle = NULL, colour = "#f5a623") {
+  htmltools::div(class = "bb-kpi",
+    htmltools::div(class = "bb-kpi-title", title),
+    htmltools::div(class = "bb-kpi-value",
+                  style = paste0("color:", colour, ";"), value),
+    if (!is.null(subtitle))
+      htmltools::div(class = "bb-kpi-subtitle", subtitle)
+  )
+}
+
+#' Empty plotly chart placeholder
+bb_empty_chart <- function(msg = "No data") {
+  plotly::plot_ly() |>
+    plotly::layout(
+      title = list(text = msg,
+                   font = list(color = "#6c757d", size = 14)),
+      paper_bgcolor = "transparent",
+      plot_bgcolor  = "transparent",
+      xaxis = list(visible = FALSE),
+      yaxis = list(visible = FALSE)
+    )
+}
+
 # ── Colour palette ─────────────────────────────────────────────────────────────
 APP_COLOURS <- list(
   primary   = "#2980b9",

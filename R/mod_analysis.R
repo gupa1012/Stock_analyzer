@@ -179,28 +179,10 @@ analysisServer <- function(id) {
     ns <- session$ns
 
     rv <- reactiveValues(
-      data     = NULL,
-      selenium = NULL,
-      loading  = FALSE,
-      error    = NULL
+      data    = NULL,
+      loading = FALSE,
+      error   = NULL
     )
-
-    # ── Selenium lifecycle ──
-    start_selenium <- function() {
-      if (is.null(rv$selenium)) {
-        tryCatch({
-          rv$selenium <- start_selenium_driver()
-        }, error = function(e) {
-          rv$error <- paste("Selenium error:", e$message)
-        })
-      }
-    }
-
-    onStop(function() {
-      if (!is.null(rv$selenium)) {
-        tryCatch(stop_selenium_driver(rv$selenium), error = function(e) NULL)
-      }
-    })
 
     # ── Active ticker ──
     active_ticker <- reactive({
@@ -217,16 +199,23 @@ analysisServer <- function(id) {
       rv$error   <- NULL
 
       withProgress(message = paste("Analyzing", ticker, "..."), {
-        start_selenium()
-        if (!is.null(rv$selenium)) {
-          tryCatch({
-            rv$data <- scrape_gurufocus(rv$selenium$driver, ticker)
-          }, error = function(e) {
+        result <- tryCatch(
+          fetch_yahoo_fundamentals(ticker),
+          error = function(e) {
             rv$error <- e$message
-            rv$data  <- NULL
-          })
+            NULL
+          }
+        )
+        if (!is.null(result)) {
+          rv$data <- result
         } else {
-          rv$error <- "Could not start Selenium"
+          rv$data <- generate_demo_data(ticker)
+          rv$error <- NULL
+          showNotification(
+            paste0("Yahoo Finance fetch failed – showing demo data for ", ticker, "."),
+            type     = "warning",
+            duration = 8
+          )
         }
       })
       rv$loading <- FALSE
