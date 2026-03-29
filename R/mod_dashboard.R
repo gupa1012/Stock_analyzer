@@ -5,12 +5,12 @@
 dashboardTabUI <- function(id) {
   ns <- NS(id)
 
-  tagList(
+  div(class = "bb-page bb-dashboard-page",
     fluidRow(
       class = "bb-section-header",
       column(8, h3(icon("briefcase"), "PORTFOLIO DASHBOARD",
                     class = "bb-title")),
-      column(4, div(style = "text-align:right; padding-top:15px;",
+      column(4, div(class = "bb-header-actions", style = "text-align:right; padding-top:15px;",
         actionButton(ns("btn_refresh"), "REFRESH",
                      class = "bb-btn-primary", icon = icon("sync")),
         span(style = "color:#6c757d; margin-left:10px; font-size:11px;",
@@ -51,7 +51,7 @@ dashboardTabUI <- function(id) {
     fluidRow(
       column(8,
         div(class = "bb-panel",
-          div(style = "display:flex; align-items:center; justify-content:space-between;",
+          div(class = "bb-panel-toolbar", style = "display:flex; align-items:center; justify-content:space-between;",
             h4(icon("table"), "HOLDINGS", class = "bb-panel-title",
                style = "margin-bottom:0;"),
             div(style = "display:flex; align-items:center; gap:12px;",
@@ -73,7 +73,9 @@ dashboardTabUI <- function(id) {
           ),
           div(style = "font-size:10px; color:#888; margin:6px 0 10px;",
               textOutput(ns("holdings_hint"), inline = TRUE)),
-          DT::dataTableOutput(ns("tbl_holdings"))
+          div(class = "bb-table-scroll",
+            DT::dataTableOutput(ns("tbl_holdings"))
+          )
         )
       ),
       column(4,
@@ -304,7 +306,7 @@ dashboardTabServer <- function(id) {
           order = list(list(6, "desc")),
           columnDefs = list(
             list(className = "dt-right", targets = c(2, 3, 4)),
-            list(visible = FALSE, targets = c(5, 6))
+            list(visible = FALSE, targets = c(5, 6, 7))
           )
         ),
         rownames = FALSE,
@@ -340,10 +342,12 @@ dashboardTabServer <- function(id) {
         div(style = "display:flex; align-items:center; margin:4px 0 8px;",
           tags$span(ts_str,
             style = "font-size:10px; color:#888; margin-right:8px;"),
-          tags$span("Einzelpositionen je ETF in EUR · sortiert nach Portfolioanteil",
+          tags$span("Einzelpositionen je ETF in EUR · Portfolioanteil relativ zum ETF-Teil des Portfolios",
             style = "font-size:10px; color:#888;")
         ),
-        DT::dataTableOutput(ns("xray_table"))
+        div(class = "bb-table-scroll",
+          DT::dataTableOutput(ns("xray_table"))
+        )
       )
     })
 
@@ -551,6 +555,8 @@ build_dashboard_holdings_table <- function(portfolio_df, quotes_df, holdings_cac
     portfolio_df
   }
 
+  direct_company_names <- extract_company_name_from_notes(base_rows$notes)
+
   direct_rows <- lapply(seq_len(nrow(base_rows)), function(i) {
     row_q <- if (!is.null(quotes_df) && nrow(quotes_df) > 0) {
       quotes_df[quotes_df$ticker == base_rows$ticker[i], ]
@@ -571,6 +577,12 @@ build_dashboard_holdings_table <- function(portfolio_df, quotes_df, holdings_cac
     }
 
     port_pct <- if (!is.na(mv) && total_mv > 0) mv / total_mv * 100 else NA_real_
+    company_name <- direct_company_names[i]
+    entity_label <- if (!is.na(company_name) && nzchar(company_name)) {
+      canonical_company_label(company_name)
+    } else {
+      base_rows$ticker[i]
+    }
 
     data.frame(
       Position = base_rows$ticker[i],
@@ -582,12 +594,29 @@ build_dashboard_holdings_table <- function(portfolio_df, quotes_df, holdings_cac
       `Chg%` = if (is.na(chg)) "--" else sprintf("%+.1f%%", chg),
       value_num = if (is.na(mv)) NA_real_ else mv,
       portfolio_pct_num = if (is.na(port_pct)) NA_real_ else port_pct,
+      entity_key = canonical_company_label(entity_label),
+      entity_label = entity_label,
+      source_type = "direct",
+      shares_num = base_rows$shares[i],
+      price_num = price_eur,
+      chg_pct_num = chg,
       check.names = FALSE,
       stringsAsFactors = FALSE
     )
   })
 
-  out <- do.call(rbind, direct_rows)
+  out <- if (length(direct_rows) == 0) {
+    data.frame(
+      Position = character(), Quelle = character(), Shares = character(),
+      Price = character(), Value = character(), `Portf.%` = character(),
+      `Chg%` = character(), value_num = numeric(), portfolio_pct_num = numeric(),
+      entity_key = character(), entity_label = character(), source_type = character(),
+      shares_num = numeric(), price_num = numeric(), chg_pct_num = numeric(),
+      check.names = FALSE, stringsAsFactors = FALSE
+    )
+  } else {
+    do.call(rbind, direct_rows)
+  }
 
   if (include_xray) {
     xray_tbl <- build_xray_table(portfolio_df, quotes_df, holdings_cache)
@@ -598,40 +627,93 @@ build_dashboard_holdings_table <- function(portfolio_df, quotes_df, holdings_cac
         Shares = "--",
         Price = "--",
         Value = xray_tbl$`Eff. Wert`,
-        `Portf.%` = xray_tbl$Portfolioanteil,
+        `Portf.%` = ifelse(
+          is.na(xray_tbl$total_portfolio_pct_num),
+          "--",
+          paste0(formatC(xray_tbl$total_portfolio_pct_num, digits = 2, format = "f"), " %")
+        ),
         `Chg%` = "--",
         value_num = xray_tbl$eff_value_num,
-        portfolio_pct_num = xray_tbl$portfolio_pct_num,
+        portfolio_pct_num = xray_tbl$total_portfolio_pct_num,
+        entity_key = canonical_company_label(xray_tbl$Unternehmen),
+        entity_label = canonical_company_label(xray_tbl$Unternehmen),
+        source_type = "xray",
+        shares_num = NA_real_,
+        price_num = NA_real_,
+        chg_pct_num = NA_real_,
         check.names = FALSE,
         stringsAsFactors = FALSE
       )
 
-      # Aggregate the same underlying company across multiple ETFs into a
-      # single row so the expanded holdings table reflects total exposure.
-      xray_split <- split(xray_rows, xray_rows$Position)
-      xray_rows <- do.call(rbind, lapply(xray_split, function(part) {
-        src <- unique(part$Quelle)
-        total_value <- sum(part$value_num, na.rm = TRUE)
-        total_pct <- sum(part$portfolio_pct_num, na.rm = TRUE)
+      out <- rbind(out, xray_rows)
+    }
+
+    if (nrow(out) > 0) {
+      grouped_rows <- split(out, out$entity_key)
+      out <- do.call(rbind, lapply(grouped_rows, function(part) {
+        direct_part <- part[part$source_type == "direct", , drop = FALSE]
+        xray_part <- part[part$source_type == "xray", , drop = FALSE]
+
+        total_value <- if (all(is.na(part$value_num))) NA_real_ else sum(part$value_num, na.rm = TRUE)
+        total_pct <- if (all(is.na(part$portfolio_pct_num))) NA_real_ else sum(part$portfolio_pct_num, na.rm = TRUE)
+
+        display_label <- if (nrow(xray_part) > 0) {
+          xray_part$entity_label[1]
+        } else if (nrow(direct_part) > 0 && !all(is.na(direct_part$entity_label)) &&
+                   any(nzchar(direct_part$entity_label))) {
+          direct_part$entity_label[1]
+        } else {
+          part$Position[1]
+        }
+
+        unique_sources <- unique(part$Quelle)
+
+        shares_display <- "--"
+        price_display <- "--"
+        chg_display <- "--"
+
+        if (nrow(direct_part) == 1) {
+          shares_display <- direct_part$Shares[1]
+          price_display <- direct_part$Price[1]
+          chg_display <- direct_part$`Chg%`[1]
+        } else if (nrow(direct_part) > 1) {
+          total_shares <- sum(direct_part$shares_num, na.rm = TRUE)
+          weighted_price <- if (total_shares > 0) {
+            sum(direct_part$price_num * direct_part$shares_num, na.rm = TRUE) / total_shares
+          } else {
+            NA_real_
+          }
+          weighted_chg <- if (all(is.na(direct_part$chg_pct_num)) || all(is.na(direct_part$value_num))) {
+            NA_real_
+          } else {
+            sum(direct_part$chg_pct_num * direct_part$value_num, na.rm = TRUE) /
+              sum(direct_part$value_num[!is.na(direct_part$chg_pct_num)], na.rm = TRUE)
+          }
+
+          shares_display <- formatC(total_shares, format = "f", digits = 4)
+          price_display <- if (is.na(weighted_price)) "--" else format_base_currency(weighted_price, digits = 2)
+          chg_display <- if (is.na(weighted_chg)) "--" else sprintf("%+.1f%%", weighted_chg)
+        }
 
         data.frame(
-          Position = part$Position[1],
-          Quelle = paste(src, collapse = " + "),
-          Shares = "--",
-          Price = "--",
-          Value = format_base_currency(total_value, digits = 0),
-          `Portf.%` = paste0(formatC(total_pct, digits = 2, format = "f"), " %"),
-          `Chg%` = "--",
+          Position = display_label,
+          Quelle = paste(unique_sources, collapse = " + "),
+          Shares = shares_display,
+          Price = price_display,
+          Value = if (is.na(total_value)) "--" else format_base_currency(total_value, digits = 0),
+          `Portf.%` = if (is.na(total_pct)) "--" else paste0(formatC(total_pct, digits = 2, format = "f"), " %"),
+          `Chg%` = chg_display,
           value_num = total_value,
           portfolio_pct_num = total_pct,
           check.names = FALSE,
           stringsAsFactors = FALSE
         )
       }))
-
-      out <- rbind(out, xray_rows)
     }
   }
 
+  out <- out[, c("Position", "Quelle", "Shares", "Price", "Value",
+                 "Portf.%", "Chg%", "value_num", "portfolio_pct_num"),
+             drop = FALSE]
   out[order(-out$value_num, -out$portfolio_pct_num), ]
 }

@@ -395,7 +395,7 @@ portfolioServer <- function(id, trigger_refresh) {
             list(className = "dt-right",
                  targets   = c(2, 3, 4)),
             list(visible = FALSE,
-                 targets = c(5, 6))
+                 targets = c(5, 6, 7))
           )
         ),
         rownames = FALSE,
@@ -426,6 +426,9 @@ portfolioServer <- function(id, trigger_refresh) {
             style = "font-size:11px; letter-spacing:1px; color:#f5a623; font-weight:bold;"),
           tags$span(ts_str,
             style = "font-size:10px; color:#888; margin-left:8px;")
+        ),
+        div(style = "font-size:10px; color:#888; margin-bottom:6px;",
+          "Portfolioanteil relativ zum ETF-Teil des Portfolios"
         ),
         DT::dataTableOutput(ns("xray_table"))
       )

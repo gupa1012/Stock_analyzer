@@ -17,7 +17,7 @@ analysisUI <- function(id) {
     ticker_choices <- c("AAPL", "MSFT", "GOOGL", "AMZN", "NVDA")
   }
 
-  tagList(
+  div(class = "bb-page bb-analysis-page",
     fluidRow(
       class = "bb-section-header",
       column(12, h3(icon("search-dollar"), "FUNDAMENTAL ANALYSIS",
@@ -123,79 +123,83 @@ analysisUI <- function(id) {
       ),
 
       # ── Tabs ──
-      tabsetPanel(
-        id = ns("analysis_tabs"),
-        type = "pills",
+      div(class = "bb-analysis-tabs",
+        tabsetPanel(
+          id = ns("analysis_tabs"),
+          type = "pills",
 
-        tabPanel("Overview",
-          fluidRow(
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_radar"), height = "350px")
-            )),
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_revenue_overview"),
-                                  height = "350px")
-            ))
-          )
-        ),
-
-        tabPanel("Valuation",
-          fluidRow(
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_pe"), height = "300px")
-            )),
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_pb"), height = "300px")
-            ))
+          tabPanel("Overview",
+            fluidRow(
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_radar"), height = "350px")
+              )),
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_revenue_overview"),
+                                    height = "350px")
+              ))
+            )
           ),
-          fluidRow(
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_ps"), height = "300px")
-            )),
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_ev_ebitda"), height = "300px")
-            ))
-          )
-        ),
 
-        tabPanel("Financials",
-          fluidRow(
-            column(4, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_revenue"), height = "300px")
-            )),
-            column(4, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_eps"), height = "300px")
-            )),
-            column(4, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_fcf"), height = "300px")
-            ))
-          )
-        ),
-
-        tabPanel("Quality",
-          fluidRow(
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_margins"), height = "300px")
-            )),
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_returns"), height = "300px")
-            ))
+          tabPanel("Valuation",
+            fluidRow(
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_pe"), height = "300px")
+              )),
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_pb"), height = "300px")
+              ))
+            ),
+            fluidRow(
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_ps"), height = "300px")
+              )),
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_ev_ebitda"), height = "300px")
+              ))
+            )
           ),
-          fluidRow(
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_debt"), height = "300px")
-            )),
-            column(6, div(class = "bb-panel",
-              plotly::plotlyOutput(ns("chart_liquidity"), height = "300px")
-            ))
-          )
-        ),
 
-        tabPanel("Raw Data",
-          fluidRow(
-            column(12, div(class = "bb-panel",
-              DT::dataTableOutput(ns("tbl_raw"))
-            ))
+          tabPanel("Financials",
+            fluidRow(
+              column(4, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_revenue"), height = "300px")
+              )),
+              column(4, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_eps"), height = "300px")
+              )),
+              column(4, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_fcf"), height = "300px")
+              ))
+            )
+          ),
+
+          tabPanel("Quality",
+            fluidRow(
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_margins"), height = "300px")
+              )),
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_returns"), height = "300px")
+              ))
+            ),
+            fluidRow(
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_debt"), height = "300px")
+              )),
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_liquidity"), height = "300px")
+              ))
+            )
+          ),
+
+          tabPanel("Raw Data",
+            fluidRow(
+              column(12, div(class = "bb-panel",
+                div(class = "bb-table-scroll",
+                  DT::dataTableOutput(ns("tbl_raw"))
+                )
+              ))
+            )
           )
         )
       )

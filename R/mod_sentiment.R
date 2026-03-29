@@ -8,12 +8,12 @@
 sentimentUI <- function(id) {
   ns <- NS(id)
 
-  tagList(
+  div(class = "bb-page bb-sentiment-page",
     fluidRow(
       class = "bb-section-header",
       column(8, h3(icon("newspaper"), "NEWS SENTIMENT",
                     class = "bb-title")),
-      column(4, div(style = "text-align:right; padding-top:10px;",
+      column(4, div(class = "bb-inline-controls", style = "text-align:right; padding-top:10px;",
         textInput(ns("ticker"), NULL, placeholder = "Ticker (e.g. AAPL)",
                   width = "140px"),
         actionButton(ns("btn_scan"), "SCAN",

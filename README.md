@@ -16,6 +16,17 @@ A **Bloomberg-inspired** Shiny app for private portfolio management, watchlist t
 | **Analysis** | Deep fundamental analysis (15+ metrics) via Alpha Vantage API or Yahoo Finance — valuation, financials, quality tabs, 5-year historicals. Demo mode included |
 | **Sentiment** | News sentiment scoring using Financial Times, Handelsblatt, and Reuters RSS feeds with a Loughran-McDonald–inspired financial lexicon |
 
+## Mobile Layout
+
+The app now supports a dedicated responsive layout for smartphone usage, which works well on shinyapps.io without maintaining a separate codebase.
+
+- **Auto detection**: the client checks viewport width and mobile user agent and switches into mobile mode automatically.
+- **Manual override**: the header contains a `LAYOUT` selector with `Auto`, `Desktop`, and `Mobile`.
+- **Persistent choice**: manual selection is stored in the browser via `localStorage`.
+- **URL override**: add `?mode=mobile`, `?mode=desktop`, or `?mode=auto` to the app URL for testing or explicit routing.
+
+This is especially useful on shinyapps.io, where the same deployed app can adapt its layout per device without needing a second deployment.
+
 ---
 
 ## Bloomberg Aesthetic
@@ -89,6 +100,14 @@ Stock_analyzer/
 
 ## How It Works
 
+### Deployment on shinyapps.io
+
+The mobile variant is implemented inside the same Shiny app rather than as a separate app. On shinyapps.io this means:
+
+- one deployment serves both desktop and mobile clients
+- device detection happens in the browser, so no server-side user-agent routing is required
+- users can still override the automatically detected mode from the header if they prefer the desktop or mobile layout
+
 ### Portfolio & Watchlist
 Portfolio positions and watchlist entries are stored in local CSV files (`user_data/`). Live prices and FX rates are fetched from the Yahoo Finance v8 chart endpoint, cached for 30 seconds, and reused across modules.
 
@@ -101,9 +120,12 @@ Currently required FX pairs for the sample portfolio:
 
 ### ETF X-Ray
 The main Portfolio tab has an **ETF X-Ray** toggle. When enabled:
-- the right-hand panel shows per-ETF look-through details
+- the right-hand panel shows aggregated look-through details across all ETF positions that hold the same company
 - the main holdings table is expanded with ETF-derived underlying positions
 - if the same company appears in multiple ETFs, those look-through rows are aggregated into one combined exposure in the main holdings table
+- if you already hold the same company directly, the expanded holdings table also merges the direct line with the ETF look-through exposure when the portfolio note contains the company name
+
+In the X-Ray detail table, repeated companies are also merged into a single row. The `ETF` column lists all contributing ETFs, while effective value is summed across those ETF sleeves. The displayed `Portfolioanteil` in that right-hand table is relative to the ETF sleeve only, whereas the main holdings table continues to show total-portfolio weights.
 
 The X-Ray table is sorted by **effective portfolio weight** so the biggest underlying exposures rise to the top.
 
@@ -153,4 +175,5 @@ Articles are scored using a curated financial sentiment lexicon (Loughran-McDona
 - Without an API key the app automatically falls back to Yahoo Finance.
 - Sentiment analysis uses free RSS feeds — no API keys needed.
 - Portfolio and watchlist quotes are cached for 30 seconds to avoid duplicate requests across tabs.
+- Mobile and desktop are served by the same app; layout mode can be forced with the header selector or a `?mode=` query parameter.
 - The app is designed for personal/research use.

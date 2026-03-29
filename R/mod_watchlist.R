@@ -5,7 +5,7 @@
 watchlistUI <- function(id) {
   ns <- NS(id)
 
-  tagList(
+  div(class = "bb-page bb-watchlist-page",
     fluidRow(
       class = "bb-section-header",
       column(12, h3(icon("eye"), "WATCHLIST",
@@ -40,7 +40,9 @@ watchlistUI <- function(id) {
       column(8,
         div(class = "bb-panel",
           h4(icon("list"), "WATCHED STOCKS", class = "bb-panel-title"),
-          DT::dataTableOutput(ns("tbl_watchlist"))
+          div(class = "bb-table-scroll",
+            DT::dataTableOutput(ns("tbl_watchlist"))
+          )
         )
       ),
       column(4,

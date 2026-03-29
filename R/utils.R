@@ -148,6 +148,29 @@ safe_numeric <- function(x) {
   vapply(x, parse_numeric_str, numeric(1), USE.NAMES = FALSE)
 }
 
+extract_company_name_from_notes <- function(notes) {
+  notes <- as.character(notes)
+  notes[is.na(notes)] <- ""
+
+  vapply(notes, function(note) {
+    note <- trimws(note)
+    if (!nzchar(note)) return(NA_character_)
+
+    company <- trimws(strsplit(note, "\\|", fixed = FALSE)[[1]][1])
+    if (!nzchar(company)) return(NA_character_)
+    company
+  }, character(1), USE.NAMES = FALSE)
+}
+
+canonical_company_label <- function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- ""
+  x <- toupper(trimws(x))
+  x <- gsub("[^A-Z0-9]+", " ", x)
+  x <- gsub("\\s+", " ", x)
+  trimws(x)
+}
+
 # ── Bloomberg-style UI helpers ───────────────────────────────────────────────
 
 #' Bloomberg-style KPI card

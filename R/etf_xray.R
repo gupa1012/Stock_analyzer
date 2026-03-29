@@ -244,6 +244,22 @@ build_xray_table <- function(portfolio_df, quotes_df, holdings_cache) {
     }
   }
 
+  # Total market value of the ETF sleeve only.
+  total_etf_mv <- 0
+  if (!is.null(quotes_df) && nrow(quotes_df) > 0) {
+    for (i in seq_len(nrow(etf_rows))) {
+      pq <- quotes_df[quotes_df$ticker == etf_rows$ticker[i], ]
+      if (nrow(pq) > 0 && !is.na(pq$price[1])) {
+        etf_mv <- convert_amount_to_base(
+          pq$price[1] * etf_rows$shares[i],
+          etf_rows$currency[i],
+          quotes_df
+        )
+        if (!is.na(etf_mv)) total_etf_mv <- total_etf_mv + etf_mv
+      }
+    }
+  }
+
   out_rows <- list()
 
   for (i in seq_len(nrow(etf_rows))) {
@@ -263,8 +279,9 @@ build_xray_table <- function(portfolio_df, quotes_df, holdings_cache) {
     }
 
     for (j in seq_len(nrow(hld))) {
-      eff_mv  <- if (!is.na(etf_mv)) etf_mv * hld$weight_pct[j] / 100 else NA
-      port_wt <- if (total_mv > 0 && !is.na(eff_mv)) eff_mv / total_mv * 100 else NA
+      eff_mv <- if (!is.na(etf_mv)) etf_mv * hld$weight_pct[j] / 100 else NA
+      etf_sleeve_wt <- if (total_etf_mv > 0 && !is.na(eff_mv)) eff_mv / total_etf_mv * 100 else NA
+      total_portfolio_wt <- if (total_mv > 0 && !is.na(eff_mv)) eff_mv / total_mv * 100 else NA
 
       out_rows[[length(out_rows) + 1]] <- data.frame(
         `ETF`            = tkr,
@@ -272,10 +289,11 @@ build_xray_table <- function(portfolio_df, quotes_df, holdings_cache) {
         `Gewicht im ETF` = paste0(formatC(hld$weight_pct[j], digits = 2, format = "f"), " %"),
         `Eff. Wert`      = if (is.na(eff_mv)) "--"
                            else format_base_currency(eff_mv, digits = 0),
-        `Portfolioanteil`= if (is.na(port_wt)) "--"
-                           else paste0(formatC(port_wt, digits = 2, format = "f"), " %"),
+        `Portfolioanteil`= if (is.na(etf_sleeve_wt)) "--"
+                           else paste0(formatC(etf_sleeve_wt, digits = 2, format = "f"), " %"),
         eff_value_num    = if (is.na(eff_mv)) NA_real_ else eff_mv,
-        portfolio_pct_num= if (is.na(port_wt)) NA_real_ else port_wt,
+        portfolio_pct_num= if (is.na(etf_sleeve_wt)) NA_real_ else etf_sleeve_wt,
+        total_portfolio_pct_num = if (is.na(total_portfolio_wt)) NA_real_ else total_portfolio_wt,
         check.names      = FALSE,
         stringsAsFactors = FALSE
       )
@@ -283,6 +301,49 @@ build_xray_table <- function(portfolio_df, quotes_df, holdings_cache) {
   }
 
   if (length(out_rows) == 0) return(NULL)
+
   out <- do.call(rbind, out_rows)
-  out[order(-out$portfolio_pct_num, -out$eff_value_num), ]
+  grouped_rows <- split(out, out$Unternehmen)
+
+  out <- do.call(rbind, lapply(grouped_rows, function(part) {
+    part <- part[order(-part$eff_value_num, -part$portfolio_pct_num), , drop = FALSE]
+
+    total_eff_value <- if (all(is.na(part$eff_value_num))) {
+      NA_real_
+    } else {
+      sum(part$eff_value_num, na.rm = TRUE)
+    }
+
+    total_portfolio_pct <- if (all(is.na(part$portfolio_pct_num))) {
+      NA_real_
+    } else {
+      sum(part$portfolio_pct_num, na.rm = TRUE)
+    }
+
+    total_overall_pct <- if (all(is.na(part$total_portfolio_pct_num))) {
+      NA_real_
+    } else {
+      sum(part$total_portfolio_pct_num, na.rm = TRUE)
+    }
+
+    data.frame(
+      `ETF`             = paste(unique(part$ETF), collapse = " + "),
+      `Unternehmen`     = part$Unternehmen[1],
+      `Gewicht im ETF`  = paste(
+        paste0(part$ETF, " ", part$`Gewicht im ETF`),
+        collapse = " + "
+      ),
+      `Eff. Wert`       = if (is.na(total_eff_value)) "--"
+                          else format_base_currency(total_eff_value, digits = 0),
+      `Portfolioanteil` = if (is.na(total_portfolio_pct)) "--"
+                          else paste0(formatC(total_portfolio_pct, digits = 2, format = "f"), " %"),
+      eff_value_num     = total_eff_value,
+      portfolio_pct_num = total_portfolio_pct,
+      total_portfolio_pct_num = total_overall_pct,
+      check.names       = FALSE,
+      stringsAsFactors  = FALSE
+    )
+  }))
+
+  out[order(-out$portfolio_pct_num, -out$eff_value_num), , drop = FALSE]
 }

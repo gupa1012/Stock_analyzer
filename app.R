@@ -29,6 +29,21 @@ source("R/mod_watchlist.R")
 source("R/mod_analysis.R")
 source("R/mod_sentiment.R")
 
+app_mode_control_ui <- function() {
+  tags$li(class = "dropdown bb-mode-dropdown",
+    tags$div(class = "bb-mode-control",
+      tags$span(class = "bb-mode-label", "LAYOUT"),
+      tags$select(
+        id = "app_mode_select",
+        class = "bb-mode-select",
+        tags$option(value = "auto", "Auto"),
+        tags$option(value = "desktop", "Desktop"),
+        tags$option(value = "mobile", "Mobile")
+      )
+    )
+  )
+}
+
 # ── UI ───────────────────────────────────────────────────────
 ui <- dashboardPage(
   skin = "black",
@@ -41,6 +56,7 @@ ui <- dashboardPage(
       tags$span(class = "bb-logo-text", "TERMINAL")
     ),
     titleWidth = 220,
+    app_mode_control_ui(),
     tags$li(class = "dropdown",
       tags$div(class = "bb-header-ticker",
         textOutput("header_clock", inline = TRUE)
@@ -69,6 +85,9 @@ ui <- dashboardPage(
         icon("circle", class = "bb-status-dot"),
         textOutput("system_status", inline = TRUE)
       ),
+      tags$div(class = "bb-sidebar-layout",
+        textOutput("app_layout_status", inline = TRUE)
+      ),
       tags$div(class = "bb-sidebar-version",
         "Bloomberg Terminal Light v2.0"
       )
@@ -84,14 +103,122 @@ ui <- dashboardPage(
         rel = "stylesheet"
       ),
       tags$meta(name = "viewport",
-                content = "width=device-width, initial-scale=1")
+                content = "width=device-width, initial-scale=1"),
+      tags$script(HTML("(function () {
+        function getQueryMode() {
+          try {
+            var params = new URLSearchParams(window.location.search || '');
+            var mode = (params.get('mode') || '').toLowerCase();
+            if (mode === 'auto' || mode === 'desktop' || mode === 'mobile') {
+              return mode;
+            }
+          } catch (err) {}
+          return null;
+        }
+
+        function detectMobile() {
+          var userAgent = navigator.userAgent || '';
+          var mobileAgent = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+          var narrowViewport = window.innerWidth <= 768;
+          return mobileAgent || narrowViewport;
+        }
+
+        function resolveChoice() {
+          var queryMode = getQueryMode();
+          if (queryMode) {
+            return queryMode;
+          }
+          try {
+            var saved = window.localStorage.getItem('bbLayoutMode');
+            if (saved === 'auto' || saved === 'desktop' || saved === 'mobile') {
+              return saved;
+            }
+          } catch (err) {}
+          return 'auto';
+        }
+
+        function publishState(choice, effective) {
+          if (!(window.Shiny && window.Shiny.setInputValue)) {
+            return;
+          }
+
+          window.Shiny.setInputValue('app_mode_choice', choice, { priority: 'event' });
+          window.Shiny.setInputValue('app_mode_effective', effective, { priority: 'event' });
+          window.Shiny.setInputValue('app_device_info', {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            user_agent: navigator.userAgent || '',
+            touch: 'ontouchstart' in window || navigator.maxTouchPoints > 0
+          }, { priority: 'event' });
+        }
+
+        function applyMode(choice) {
+          var effective = choice === 'auto'
+            ? (detectMobile() ? 'mobile' : 'desktop')
+            : choice;
+          var body = document.body;
+          if (!body) {
+            return;
+          }
+
+          body.classList.remove('bb-mobile-mode', 'bb-desktop-mode', 'sidebar-open');
+          body.classList.add(effective === 'mobile' ? 'bb-mobile-mode' : 'bb-desktop-mode');
+          body.classList.toggle('sidebar-collapse', effective === 'mobile');
+          body.setAttribute('data-layout-choice', choice);
+          body.setAttribute('data-layout-effective', effective);
+
+          var select = document.getElementById('app_mode_select');
+          if (select && select.value !== choice) {
+            select.value = choice;
+          }
+
+          try {
+            window.localStorage.setItem('bbLayoutMode', choice);
+          } catch (err) {}
+
+          publishState(choice, effective);
+        }
+
+        function bindControl() {
+          var select = document.getElementById('app_mode_select');
+          if (!select || select.dataset.bound === '1') {
+            return;
+          }
+          select.dataset.bound = '1';
+          select.addEventListener('change', function (event) {
+            applyMode((event.target.value || 'auto').toLowerCase());
+          });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+          bindControl();
+          applyMode(resolveChoice());
+        });
+
+        document.addEventListener('shiny:connected', function () {
+          bindControl();
+          applyMode(resolveChoice());
+        });
+
+        window.addEventListener('resize', function () {
+          var select = document.getElementById('app_mode_select');
+          var choice = select ? (select.value || 'auto') : resolveChoice();
+          if (choice === 'auto') {
+            applyMode('auto');
+          } else {
+            publishState(choice, choice);
+          }
+        });
+      })();"))
     ),
 
-    tabItems(
-      tabItem(tabName = "tab_dashboard",  dashboardTabUI("dash")),
-      tabItem(tabName = "tab_watchlist",  watchlistUI("watchlist")),
-      tabItem(tabName = "tab_analysis",   analysisUI("analysis")),
-      tabItem(tabName = "tab_sentiment",  sentimentUI("sentiment"))
+    div(class = "bb-app-shell",
+      tabItems(
+        tabItem(tabName = "tab_dashboard",  dashboardTabUI("dash")),
+        tabItem(tabName = "tab_watchlist",  watchlistUI("watchlist")),
+        tabItem(tabName = "tab_analysis",   analysisUI("analysis")),
+        tabItem(tabName = "tab_sentiment",  sentimentUI("sentiment"))
+      )
     )
   )
 )
@@ -109,6 +236,20 @@ server <- function(input, output, session) {
   output$system_status <- renderText({
     invalidateLater(30000, session)
     "ONLINE"
+  })
+
+  output$app_layout_status <- renderText({
+    choice <- input$app_mode_choice
+    effective <- input$app_mode_effective
+
+    if (is.null(choice) || !nzchar(choice)) choice <- "auto"
+    if (is.null(effective) || !nzchar(effective)) effective <- "desktop"
+
+    if (identical(choice, "auto")) {
+      paste("LAYOUT AUTO ·", toupper(effective))
+    } else {
+      paste("LAYOUT FIXED ·", toupper(effective))
+    }
   })
 
   # ── Shared refresh trigger ──
