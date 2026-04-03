@@ -197,6 +197,68 @@ bb_empty_chart <- function(msg = "No data") {
     )
 }
 
+format_notice_timestamp <- function(ts, default = "not loaded yet",
+                                    fmt = "%d.%m.%Y %H:%M") {
+  if (is.null(ts) || length(ts) == 0) return(default)
+
+  ts_val <- suppressWarnings(as.POSIXct(ts[[1]], tz = "UTC"))
+  if (is.na(ts_val)) return(default)
+
+  format(ts_val, fmt)
+}
+
+format_cache_origin_label <- function(origin, ttl_days = 30L) {
+  if (is.null(origin)) origin <- ""
+  origin <- tolower(trimws(as.character(origin)))
+
+  switch(origin,
+    memory = "session cache",
+    disk = paste0("disk cache (<", ttl_days, " days)"),
+    live = "live request",
+    unknown = "unknown",
+    if (nzchar(origin)) origin else "unknown"
+  )
+}
+
+bb_data_source_notice <- function(items, title = "DATA SOURCES", footer = NULL) {
+  if (is.null(items) || length(items) == 0) return(NULL)
+
+  item_names <- names(items)
+  if (is.null(item_names)) {
+    item_names <- rep("", length(items))
+  }
+
+  rows <- Filter(Negate(is.null), lapply(seq_along(items), function(idx) {
+    value <- items[[idx]]
+    if (is.null(value)) return(NULL)
+
+    value <- trimws(as.character(if (length(value) > 0) value[[1]] else ""))
+    if (!nzchar(value)) return(NULL)
+
+    label <- trimws(item_names[[idx]])
+
+    htmltools::div(class = "bb-data-source-item",
+      htmltools::span(class = "bb-data-source-label",
+        if (nzchar(label)) paste0(label, ":") else NULL
+      ),
+      htmltools::span(class = "bb-data-source-value", value)
+    )
+  }))
+
+  if (length(rows) == 0) return(NULL)
+
+  htmltools::div(class = "bb-data-source-notice",
+    htmltools::div(class = "bb-data-source-title",
+      icon("database"),
+      title
+    ),
+    htmltools::div(class = "bb-data-source-items", rows),
+    if (!is.null(footer) && nzchar(trimws(as.character(footer)))) {
+      htmltools::div(class = "bb-data-source-footer", footer)
+    }
+  )
+}
+
 # ── Colour palette ─────────────────────────────────────────────────────────────
 APP_COLOURS <- list(
   primary   = "#2980b9",

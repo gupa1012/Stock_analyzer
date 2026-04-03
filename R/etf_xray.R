@@ -96,11 +96,13 @@ fetch_local_xlsx_holdings <- function(pattern, top_n = NULL) {
     df <- utils::head(df, top_n)
   }
 
-  data.frame(
+  out <- data.frame(
     name       = trimws(df[[name_col]]),
     weight_pct = df$weight_pct,
     stringsAsFactors = FALSE
   )
+  attr(out, "source_label") <- paste0("Local XLSX (", basename(f), ")")
+  out
 }
 
 # ── iShares CSV parser ───────────────────────────────────────
@@ -154,11 +156,13 @@ fetch_ishares_holdings <- function(csv_url, top_n = 10) {
   df <- df[order(-df$weight_pct), ]
   df <- utils::head(df, top_n)
 
-  data.frame(
+  out <- data.frame(
     name       = trimws(df[[name_col]]),
     weight_pct = df$weight_pct,
     stringsAsFactors = FALSE
   )
+  attr(out, "source_label") <- "iShares CSV"
+  out
 }
 
 # ── Fetch top-10 holdings via justETF.com SSR HTML ───────────
@@ -202,7 +206,9 @@ fetch_justetf_holdings <- function(isin) {
     )
   })
 
-  do.call(rbind, parsed)
+  out <- do.call(rbind, parsed)
+  attr(out, "source_label") <- "justETF HTML fallback"
+  out
 }
 
 # ── Simple HTML entity decoder ────────────────────────────────

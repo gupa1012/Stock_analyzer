@@ -12,8 +12,8 @@ A **Bloomberg-inspired** Shiny app for private portfolio management, watchlist t
 | Module | Description |
 |--------|-------------|
 | **Portfolio** | Combined start page with KPIs, add/remove position controls, allocation, a full holdings table, and an **ETF X-Ray** look-through panel. When X-Ray is on, the main holdings list expands with ETF-derived underlying exposures |
-| **Watchlist** | Track stocks you're watching with target prices, live quotes, and mini price charts |
-| **Analysis** | Deep fundamental analysis (15+ metrics) via Alpha Vantage API or Yahoo Finance — valuation, financials, quality tabs, 5-year historicals. Demo mode included |
+| **Watchlist** | Track stocks you're watching with target prices, daily move, 52-week range, inline mini charts, and a click-linked detail chart |
+| **Analysis** | Valuation-first fundamental dashboard with Alpha Vantage overview-first loading, on-demand statement history, SEC EDGAR fallback for US tickers, Yahoo fallback, and demo mode |
 | **Sentiment** | News sentiment scoring using Financial Times, Handelsblatt, and Reuters RSS feeds with a Loughran-McDonald–inspired financial lexicon |
 
 ## Mobile Layout
@@ -82,7 +82,7 @@ Stock_analyzer/
 │   ├── mod_watchlist.R    # Watchlist module
 │   ├── mod_analysis.R     # Fundamental analysis module
 │   ├── mod_sentiment.R    # Sentiment display module
-│   ├── scraper.R          # Fundamental data fetcher (Alpha Vantage + Yahoo Finance)
+│   ├── scraper.R          # Fundamental data fetcher (Alpha Vantage + SEC EDGAR + Yahoo Finance)
 │   ├── etf_xray.R         # ETF look-through (X-Ray) — iShares CSV + justETF.com
 │   ├── charts.R           # Plotly chart builders
 │   ├── utils.R            # Formatting helpers & colour palette
@@ -110,6 +110,12 @@ The mobile variant is implemented inside the same Shiny app rather than as a sep
 
 ### Portfolio & Watchlist
 Portfolio positions and watchlist entries are stored in local CSV files (`user_data/`). Live prices and FX rates are fetched from the Yahoo Finance v8 chart endpoint, cached for 30 seconds, and reused across modules.
+
+All four primary tabs now show a compact **Data Sources** hint near the top so you can see which feeds currently drive the screen in front of you.
+
+`user_data/watchlist.csv` uses the columns `ticker,date_added,target_price,notes`. Empty `target_price` or `notes` fields are normalized when read, which makes one-off imports from exported watchlists safe even when the source file has no targets or notes yet.
+
+The Watchlist table uses `reactable` and now has a Bloomberg-style dark theme. It shows price, a stacked daily move cell, a 52-week range slider with the current price marker inside the stock's own range, and an inline sparkline per ticker. Clicking a row updates the price chart on the right, so there is no separate chart ticker selector.
 
 ### Base Currency
 Portfolio, watchlist table values, and X-Ray effective values are shown in **EUR**. For non-EUR securities the app fetches Yahoo FX pairs dynamically and converts price / market value / P&L into EUR.
@@ -148,11 +154,22 @@ Currently mapped:
 | QDVW.DE | iShares MSCI World Quality Dividend ESG UCITS ETF (Dist) | IE00BYYHSQ67 | iShares CSV |
 
 ### Fundamental Analysis
-The analysis module fetches fundamental data from two sources (in priority order):
+The analysis module fetches fundamental data in an overview-first flow to reduce Alpha Vantage usage:
 
-1. **Alpha Vantage** (if API key is set via env var `alpha_vantage_api_key`) — 4 API calls per analysis (`OVERVIEW`, `INCOME_STATEMENT`, `BALANCE_SHEET`, `CASH_FLOW`). Provides P/S ratio, EV/EBITDA, TTM margins, and up to 5 years of annual historicals. Uses the `alphavantager` R package.
-2. **Yahoo Finance** (fallback, no key needed) — fetches via the unofficial JSON API. Covers revenue, EPS, FCF, P/E, P/B, margins, ROE/ROA, debt ratios.
-3. **Demo mode** — generates realistic synthetic data when both live sources fail.
+1. **Persistent cache first** — fundamentals payloads are stored under `user_data/cache/fundamentals/` as `.rds` files with fetch timestamps. Before any live request, the app checks this cache first and reuses data for up to 30 days.
+2. **Alpha Vantage Overview first** (if API key is set via env var `alpha_vantage_api_key`) — the `ANALYZE` button loads only `OVERVIEW` initially, so opening the analysis tab does not immediately consume all free-tier calls.
+3. **SEC EDGAR first for US statement history** — when a US ticker opens `Earnings`, `Balance Sheet`, or `Cash Flow`, the app prefers SEC `company_tickers.json` plus `companyfacts` XBRL data for annual revenue, operating income, net income, cash, debt, operating cash flow, free cash flow, buybacks, and derived leverage/liquidity ratios. This preserves Alpha Vantage statement calls for international names.
+4. **Alpha Vantage statements on demand for non-US or missing SEC coverage** — if SEC is not applicable or does not provide strong enough coverage, the app fetches `INCOME_STATEMENT`, `BALANCE_SHEET`, and `CASH_FLOW` on demand. Requests are throttled to respect the free-tier `1 request / second` guidance.
+5. **Yahoo Finance** (fallback, no key needed) — fetches via the unofficial JSON API. Covers a reduced set of revenue, operating income, net income, EPS, FCF, margins, and leverage metrics so the analysis tab still renders when no API key is available. If SEC or Alpha Vantage still leave gaps, the app supplements the missing histories from Yahoo instead of failing the full analysis.
+6. **Demo mode** — generates realistic synthetic data when both live sources fail.
+
+The analysis page also shows a local Alpha Vantage usage estimate. Alpha Vantage does **not** expose an official endpoint for “remaining requests today”, so the app logs its own live Alpha Vantage calls and displays an estimated `used / 25` count for the current day.
+
+The analysis tab is organized into four views:
+- **Overview** — company description, valuation tiles, valuation snapshot, and profitability/growth snapshot
+- **Earnings** — 10-year revenue, operating income, net income, plus margin/return context
+- **Balance Sheet** — cash vs debt history with leverage and liquidity charts
+- **Cash Flow** — operating cash flow, free cash flow, buybacks, plus standalone FCF / EPS trend cards
 
 No browser, Chrome, or chromedriver required.
 
@@ -171,8 +188,10 @@ Articles are scored using a curated financial sentiment lexicon (Loughran-McDona
 
 - Portfolio data is stored locally — no cloud sync.
 - No Chrome/chromedriver needed — Selenium dependency fully removed.
-- Alpha Vantage free tier: 25 requests/day (~6 full analyses/day).
+- Alpha Vantage free tier: 25 requests/day. The app now checks a 30-day on-disk cache first, uses only the `OVERVIEW` call on the first `ANALYZE` click, and prefers SEC statement data for US tickers before spending Alpha Vantage statement requests.
+- The Alpha Vantage counter shown in the Analysis tab is a **local estimate** of live calls made by this app, not an official quota value from Alpha Vantage.
 - Without an API key the app automatically falls back to Yahoo Finance.
+- For US tickers, SEC EDGAR is now the preferred source for statement history; Alpha Vantage statements are used mainly for international tickers or when SEC coverage is insufficient.
 - Sentiment analysis uses free RSS feeds — no API keys needed.
 - Portfolio and watchlist quotes are cached for 30 seconds to avoid duplicate requests across tabs.
 - Mobile and desktop are served by the same app; layout mode can be forced with the header selector or a `?mode=` query parameter.

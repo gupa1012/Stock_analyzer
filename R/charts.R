@@ -115,6 +115,55 @@ make_combo_chart <- function(df_bar, df_line, title = "",
   p
 }
 
+#' Grouped bar chart for multiple annual series.
+make_grouped_bar_chart <- function(series_list, title = "", yaxis_title = "") {
+  valid_series <- Filter(function(df) !is.null(df) && nrow(df) > 0, series_list)
+  if (length(valid_series) == 0) return(empty_chart(title))
+
+  palette <- c("#44d7b6", "#f5a623", "#ff6b6b", "#4da3ff", "#8e7dff")
+  p <- plot_ly()
+
+  for (idx in seq_along(valid_series)) {
+    series_name <- names(valid_series)[idx]
+    df <- valid_series[[idx]]
+    p <- add_bars(
+      p,
+      x = df$year,
+      y = df$value,
+      name = series_name,
+      marker = list(color = palette[((idx - 1) %% length(palette)) + 1]),
+      hovertemplate = paste0(
+        "<b>%{x}</b><br>",
+        series_name,
+        ": %{y:,.3s}<extra></extra>"
+      )
+    )
+  }
+
+  p <- apply_layout(p, title)
+  layout(p, barmode = "group", yaxis = list(title = yaxis_title))
+}
+
+#' Horizontal bar chart for a current snapshot of metrics.
+make_snapshot_bar_chart <- function(metrics_df, title = "") {
+  if (is.null(metrics_df) || nrow(metrics_df) == 0) return(empty_chart(title))
+
+  metrics_df <- metrics_df[order(metrics_df$value), , drop = FALSE]
+  p <- plot_ly(
+    metrics_df,
+    x = ~value,
+    y = ~metric,
+    type = "bar",
+    orientation = "h",
+    marker = list(color = metrics_df$colour),
+    text = ~label,
+    textposition = "outside",
+    hovertemplate = "<b>%{y}</b><br>%{text}<extra></extra>"
+  )
+  p <- apply_layout(p, title)
+  layout(p, yaxis = list(title = "", automargin = TRUE), xaxis = list(title = ""))
+}
+
 #' Placeholder chart when no data is available.
 empty_chart <- function(title = "") {
   p <- plot_ly(type = "scatter", mode = "text") %>%
@@ -299,4 +348,90 @@ chart_radar <- function(history, ticker) {
   )
 
   make_radar_chart(scores, title = paste(ticker, "– Quality Radar"))
+}
+
+chart_valuation_snapshot <- function(summary) {
+  metrics <- data.frame(
+    metric = c("Trailing P/E", "Forward P/E", "PEG", "P/B", "P/S", "EV/Revenue", "EV/EBITDA", "Dividend Yield %"),
+    value = c(
+      get_metric_num(summary, "trailing pe|pe ratio"),
+      get_metric_num(summary, "forward pe"),
+      get_metric_num(summary, "peg"),
+      get_metric_num(summary, "price to book|pb ratio"),
+      get_metric_num(summary, "price to sales|ps ratio"),
+      get_metric_num(summary, "ev/revenue"),
+      get_metric_num(summary, "ev/ebitda"),
+      get_metric_num(summary, "dividend yield")
+    ),
+    colour = c("#f5a623", "#ff8f3d", "#ffd166", "#4da3ff", "#2dd4bf", "#22c55e", "#8b5cf6", "#ff6b6b"),
+    stringsAsFactors = FALSE
+  )
+  metrics <- metrics[!is.na(metrics$value), , drop = FALSE]
+  if (nrow(metrics) == 0) return(empty_chart("Valuation Snapshot"))
+  metrics$label <- ifelse(metrics$metric == "Dividend Yield %",
+                          paste0(round(metrics$value, 2), "%"),
+                          sprintf("%.2f", metrics$value))
+  make_snapshot_bar_chart(metrics, "Valuation Snapshot")
+}
+
+chart_profitability_snapshot <- function(summary) {
+  metrics <- data.frame(
+    metric = c("ROE %", "ROA %", "Gross Margin %", "Operating Margin %", "Net Margin %", "Target Upside %", "Rev Growth %", "EPS Growth %"),
+    value = c(
+      get_metric_num(summary, "roe"),
+      get_metric_num(summary, "roa"),
+      get_metric_num(summary, "gross margin"),
+      get_metric_num(summary, "operating margin|oper margin"),
+      get_metric_num(summary, "profit margin|net margin"),
+      get_metric_num(summary, "target upside"),
+      get_metric_num(summary, "quarterly revenue growth"),
+      get_metric_num(summary, "quarterly earnings growth")
+    ),
+    colour = c("#44d7b6", "#4da3ff", "#7dd3fc", "#22c55e", "#f59e0b", "#8b5cf6", "#f97316", "#ef4444"),
+    stringsAsFactors = FALSE
+  )
+  metrics <- metrics[!is.na(metrics$value), , drop = FALSE]
+  if (nrow(metrics) == 0) return(empty_chart("Profitability & Growth"))
+  metrics$label <- paste0(round(metrics$value, 2), "%")
+  make_snapshot_bar_chart(metrics, "Profitability & Growth")
+}
+
+chart_earnings_history <- function(history) {
+  make_grouped_bar_chart(
+    list(
+      "Revenue" = history[["revenue"]],
+      "Operating Income" = history[["operating_income"]],
+      "Net Income" = history[["net_income"]]
+    ),
+    title = "10Y Earnings History",
+    yaxis_title = "USD"
+  )
+}
+
+chart_cash_vs_debt <- function(history) {
+  make_grouped_bar_chart(
+    list(
+      "Cash" = history[["cash"]],
+      "Debt" = history[["debt"]]
+    ),
+    title = "Cash vs Debt",
+    yaxis_title = "USD"
+  )
+}
+
+chart_cashflow_allocation <- function(history) {
+  buybacks_df <- history[["buybacks"]]
+  if (!is.null(buybacks_df) && nrow(buybacks_df) > 0) {
+    buybacks_df <- buybacks_df |> mutate(value = -abs(value))
+  }
+
+  make_grouped_bar_chart(
+    list(
+      "Operating Cash Flow" = history[["operating_cashflow"]],
+      "Free Cash Flow" = history[["free_cashflow"]],
+      "Buybacks" = buybacks_df
+    ),
+    title = "Cash Flow + Buybacks",
+    yaxis_title = "USD"
+  )
 }

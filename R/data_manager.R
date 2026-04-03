@@ -102,7 +102,19 @@ read_watchlist <- function() {
   for (col in WATCHLIST_COLS) {
     if (!col %in% names(df)) df[[col]] <- NA
   }
-  df
+
+    df$ticker <- toupper(trimws(as.character(df$ticker)))
+    df$date_added <- as.character(df$date_added)
+
+    target_price_raw <- trimws(as.character(df$target_price))
+    target_price_raw[target_price_raw %in% c("", "NA")] <- NA_character_
+    df$target_price <- suppressWarnings(as.numeric(target_price_raw))
+
+    notes_raw <- as.character(df$notes)
+    notes_raw[is.na(notes_raw)] <- ""
+    df$notes <- notes_raw
+
+    df
 }
 
 write_watchlist <- function(df) {

@@ -21,6 +21,7 @@ pkgs <- c(
   # Visualisation
   "plotly",
   "DT",
+  "reactable",
   # Data manipulation
   "dplyr",
   "tidyr",

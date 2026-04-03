@@ -24,6 +24,10 @@ analysisUI <- function(id) {
                     class = "bb-title"))
     ),
 
+    fluidRow(
+      column(12, uiOutput(ns("data_source_notice")))
+    ),
+
     # ── Controls ──
     fluidRow(
       class = "bb-form-row",
@@ -80,16 +84,16 @@ analysisUI <- function(id) {
             ),
             column(7,
               div(style = "padding-top: 32px; color:#6c757d; font-size:12px;",
-                icon("info-circle"), " With key: live fundamental data (P/S, EV/EBITDA, 5-year historicals).",
+                icon("info-circle"), " With key: Alpha Vantage Overview first; US statement history prefers SEC EDGAR and cached data before new API calls.",
                 tags$br(),
-                "Without key: Yahoo Finance fallback.  ",
+                "Without key: Yahoo Finance fallback with a reduced dataset.  ",
                 tags$a(
                   href   = "https://www.alphavantage.co/support/#api-key",
                   target = "_blank",
                   style  = "color:#f5a623;",
                   icon("external-link-alt"), " Get free key"
                 ),
-                " (25 req/day free → ~6 analyses/day)."
+                " (international detail tabs can still use Alpha Vantage statement calls when no fresh cache exists)."
               )
             )
           )
@@ -130,56 +134,43 @@ analysisUI <- function(id) {
 
           tabPanel("Overview",
             fluidRow(
-              column(6, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_radar"), height = "350px")
+              column(7, div(class = "bb-panel",
+                uiOutput(ns("company_overview_panel"))
               )),
-              column(6, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_revenue_overview"),
-                                    height = "350px")
-              ))
-            )
-          ),
-
-          tabPanel("Valuation",
-            fluidRow(
-              column(6, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_pe"), height = "300px")
-              )),
-              column(6, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_pb"), height = "300px")
+              column(5, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_valuation_snapshot"), height = "330px")
               ))
             ),
             fluidRow(
               column(6, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_ps"), height = "300px")
+                uiOutput(ns("valuation_tile_grid"))
               )),
               column(6, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_ev_ebitda"), height = "300px")
+                plotly::plotlyOutput(ns("chart_profitability_snapshot"), height = "330px")
               ))
             )
           ),
 
-          tabPanel("Financials",
+          tabPanel("Earnings",
             fluidRow(
-              column(4, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_revenue"), height = "300px")
-              )),
-              column(4, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_eps"), height = "300px")
-              )),
-              column(4, div(class = "bb-panel",
-                plotly::plotlyOutput(ns("chart_fcf"), height = "300px")
+              column(12, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_earnings_history"), height = "360px")
               ))
-            )
-          ),
-
-          tabPanel("Quality",
+            ),
             fluidRow(
               column(6, div(class = "bb-panel",
                 plotly::plotlyOutput(ns("chart_margins"), height = "300px")
               )),
               column(6, div(class = "bb-panel",
                 plotly::plotlyOutput(ns("chart_returns"), height = "300px")
+              ))
+            )
+          ),
+
+          tabPanel("Balance Sheet",
+            fluidRow(
+              column(12, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_cash_vs_debt"), height = "360px")
               ))
             ),
             fluidRow(
@@ -188,6 +179,22 @@ analysisUI <- function(id) {
               )),
               column(6, div(class = "bb-panel",
                 plotly::plotlyOutput(ns("chart_liquidity"), height = "300px")
+              ))
+            )
+          ),
+
+          tabPanel("Cash Flow",
+            fluidRow(
+              column(12, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_cashflow_allocation"), height = "360px")
+              ))
+            ),
+            fluidRow(
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_fcf"), height = "300px")
+              )),
+              column(6, div(class = "bb-panel",
+                plotly::plotlyOutput(ns("chart_eps"), height = "300px")
               ))
             )
           ),
@@ -212,11 +219,63 @@ analysisServer <- function(id) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
+    metric_card <- function(label, value, subtitle = NULL) {
+      div(class = "bb-analysis-metric-card",
+        div(class = "bb-analysis-metric-label", label),
+        div(class = "bb-analysis-metric-value", value),
+        if (!is.null(subtitle)) div(class = "bb-analysis-metric-sub", subtitle)
+      )
+    }
+
     rv <- reactiveValues(
-      data    = NULL,
-      loading = FALSE,
-      error   = NULL
+      data           = NULL,
+      loading        = FALSE,
+      error          = NULL,
+      detail_pending = FALSE
     )
+
+    maybe_load_detail_data <- function(selected_tab = input$analysis_tabs) {
+      if (is.null(rv$data) || isTRUE(rv$data$demo_mode) || !isTRUE(rv$detail_pending) || isTRUE(rv$loading)) {
+        return(invisible(NULL))
+      }
+
+      if (is.null(selected_tab) || !selected_tab %in% c("Earnings", "Balance Sheet", "Cash Flow")) {
+        return(invisible(NULL))
+      }
+
+      api_key <- trimws(input$av_api_key %||% "")
+      if (nchar(api_key) == 0) {
+        rv$detail_pending <- FALSE
+        return(invisible(NULL))
+      }
+
+      rv$loading <- TRUE
+      withProgress(message = paste("Loading detailed statements for", rv$data$ticker, "..."), {
+        setProgress(0.2, detail = "Fetching statements and fallbacks ...")
+        detailed_result <- tryCatch(
+          fetch_av_fundamentals(rv$data$ticker, api_key),
+          error = function(e) {
+            rv$error <- e$message
+            NULL
+          }
+        )
+
+        if (!is.null(detailed_result)) {
+          rv$data <- detailed_result
+          rv$detail_pending <- FALSE
+          rv$error <- NULL
+          setProgress(0.95, detail = "Done.")
+        } else {
+          showNotification(
+            paste0("Detailed statements for ", rv$data$ticker,
+                   " could not be loaded right now. Overview remains available."),
+            type = "warning", duration = 6
+          )
+        }
+      })
+      rv$loading <- FALSE
+      invisible(NULL)
+    }
 
     # ── Active ticker ──
     active_ticker <- reactive({
@@ -239,14 +298,16 @@ analysisServer <- function(id) {
 
         # 1. Try Alpha Vantage if the user supplied a key
         if (nchar(api_key) > 0) {
-          setProgress(0.2, detail = "Calling Alpha Vantage …")
+          setProgress(0.2, detail = "Calling Alpha Vantage Overview …")
           result <- tryCatch(
-            fetch_av_fundamentals(ticker, api_key),
+            fetch_av_overview_data(ticker, api_key),
             error = function(e) { rv$error <- e$message; NULL }
           )
           if (!is.null(result)) {
+            rv$detail_pending <- TRUE
             setProgress(0.9, detail = "Done.")
           } else {
+            rv$detail_pending <- FALSE
             showNotification(
               paste0("Alpha Vantage fetch failed for ", ticker,
                      " – trying Yahoo Finance …"),
@@ -258,6 +319,7 @@ analysisServer <- function(id) {
         # 2. Fall back to Yahoo Finance
         if (is.null(result)) {
           setProgress(0.4, detail = "Calling Yahoo Finance …")
+          rv$detail_pending <- FALSE
           result <- tryCatch(
             fetch_yahoo_fundamentals(ticker),
             error = function(e) { rv$error <- e$message; NULL }
@@ -266,9 +328,17 @@ analysisServer <- function(id) {
 
         if (!is.null(result)) {
           rv$data <- result
+          if (isTRUE(rv$detail_pending)) {
+            showNotification(
+              paste0("Loaded Overview for ", ticker,
+                     ". Statement history will load when you open a detail tab."),
+              type = "message", duration = 5
+            )
+          }
         } else {
           rv$data <- generate_demo_data(ticker)
           rv$error <- NULL
+          rv$detail_pending <- FALSE
           showNotification(
             paste0("All live sources failed – showing demo data for ", ticker, "."),
             type = "warning", duration = 8
@@ -281,10 +351,19 @@ analysisServer <- function(id) {
     # ── Demo button ──
     observeEvent(input$btn_demo, {
       ticker <- active_ticker()
-      rv$data    <- generate_demo_data(ticker)
-      rv$error   <- NULL
-      rv$loading <- FALSE
+      rv$data           <- generate_demo_data(ticker)
+      rv$error          <- NULL
+      rv$loading        <- FALSE
+      rv$detail_pending <- FALSE
     })
+
+    observeEvent(input$analysis_tabs, {
+      maybe_load_detail_data(input$analysis_tabs)
+    }, ignoreInit = TRUE)
+
+    observeEvent(rv$data, {
+      maybe_load_detail_data(input$analysis_tabs)
+    }, ignoreInit = TRUE)
 
     # ── Has data flag ──
     output$has_data <- reactive(!is.null(rv$data))
@@ -309,62 +388,164 @@ analysisServer <- function(id) {
       }
     })
 
+    output$data_source_notice <- renderUI({
+      d <- rv$data
+      api_key <- trimws(input$av_api_key %||% "")
+      av_status <- if (nchar(api_key) > 0) get_av_usage_status() else NULL
+
+      items <- if (is.null(d)) {
+        c(
+          "Flow" = "30-day disk cache -> Alpha Vantage OVERVIEW -> SEC EDGAR first for US statements -> Yahoo fallback",
+          "Cache" = "user_data/cache/fundamentals"
+        )
+      } else if (isTRUE(d$demo_mode)) {
+        c(
+          "Current View" = "Demo dataset",
+          "Live Sources" = "Alpha Vantage, SEC EDGAR, Yahoo Finance",
+          "Cache" = "user_data/cache/fundamentals"
+        )
+      } else {
+        c(
+          d$metadata$source_breakdown,
+          "Loaded" = format_notice_timestamp(d$timestamp),
+          "Cache" = "user_data/cache/fundamentals"
+        )
+      }
+
+      if (!is.null(av_status)) {
+        items <- c(
+          items,
+          "Alpha Vantage" = paste0(
+            "No official remaining-requests endpoint; local live calls today ",
+            av_status$live_requests_today,
+            "/",
+            av_status$limit,
+            ", est. left ",
+            av_status$estimated_remaining
+          )
+        )
+      } else {
+        items <- c(items, "Alpha Vantage" = "No API key configured")
+      }
+
+      bb_data_source_notice(
+        items,
+        footer = "Alpha Vantage does not expose an official daily remaining-request counter; the shown value is this app's local live-call estimate."
+      )
+    })
+
     # ── KPI row ──
     output$kpi_row <- renderUI({
       d <- rv$data
       if (is.null(d)) return(NULL)
 
       s <- d$summary
-      fluidRow(
-        column(2, bb_kpi("P/E Ratio",
-                         get_metric(s, "p/e|pe ratio", "--"),
-                         colour = "#f5a623")),
-        column(2, bb_kpi("P/B Ratio",
-                         get_metric(s, "p/b|pb ratio", "--"),
-                         colour = "#ff6f00")),
-        column(2, bb_kpi("ROE",
-                         get_metric(s, "roe|return on equity", "--"),
-                         colour = "#00c853")),
-        column(2, bb_kpi("Debt/Eq",
-                         get_metric(s, "debt.?to.?equity|d/e", "--"),
-                         colour = "#ff1744")),
-        column(2, bb_kpi("Revenue",
-                         get_metric(s, "revenue", "--"),
-                         colour = "#0091ea")),
-        column(2, bb_kpi("Net Margin",
-                         get_metric(s, "net.?margin|net margin", "--"),
-                         colour = "#aa00ff"))
+      tagList(
+        fluidRow(
+          column(3, bb_kpi("Market Cap",
+                           get_metric(s, "market cap", "--"),
+                           subtitle = "Capitalization",
+                           colour = "#f5a623")),
+          column(3, bb_kpi("Current Price",
+                           get_metric(s, "current price", "--"),
+                           subtitle = get_metric(s, "reported currency", "--"),
+                           colour = "#4da3ff")),
+          column(3, bb_kpi("Trailing P/E",
+                           get_metric(s, "trailing pe|pe ratio", "--"),
+                           subtitle = "TTM",
+                           colour = "#44d7b6")),
+          column(3, bb_kpi("Forward P/E",
+                           get_metric(s, "forward pe", "--"),
+                           subtitle = "Consensus",
+                           colour = "#ffd166"))
+        ),
+        fluidRow(
+          column(3, bb_kpi("Dividend Yield",
+                           get_metric(s, "dividend yield", "--"),
+                           subtitle = "Current",
+                           colour = "#ff6b6b")),
+          column(3, bb_kpi("P/B",
+                           get_metric(s, "price to book|pb ratio", "--"),
+                           subtitle = "Book multiple",
+                           colour = "#8e7dff")),
+          column(3, bb_kpi("EV/EBITDA",
+                           get_metric(s, "ev/ebitda", "--"),
+                           subtitle = "Enterprise value",
+                           colour = "#00c853")),
+          column(3, bb_kpi("Target Upside",
+                           get_metric(s, "target upside", "--"),
+                           subtitle = "vs analyst target",
+                           colour = "#ff8f3d"))
+        )
+      )
+    })
+
+    output$company_overview_panel <- renderUI({
+      d <- rv$data
+      if (is.null(d)) return(NULL)
+
+      s <- d$summary
+      company_name <- get_metric(s, "company name", d$ticker)
+      source_label <- get_metric(s, "source", if (isTRUE(d$demo_mode)) "Demo" else "Live")
+      description <- get_metric(s, "description", "No company description available.")
+
+      div(class = "bb-analysis-company",
+        div(class = "bb-analysis-company-header",
+          div(
+            div(class = "bb-analysis-company-name", company_name),
+            div(class = "bb-analysis-company-symbol", d$ticker)
+          ),
+          div(class = "bb-analysis-company-badges",
+            span(class = "bb-badge bb-badge-info", get_metric(s, "exchange", "--")),
+            span(class = "bb-badge bb-badge-muted", source_label)
+          )
+        ),
+        div(class = "bb-analysis-chip-row",
+          span(class = "bb-analysis-chip", get_metric(s, "sector", "--")),
+          span(class = "bb-analysis-chip", get_metric(s, "industry", "--")),
+          span(class = "bb-analysis-chip", get_metric(s, "asset type", "--"))
+        ),
+        tags$p(class = "bb-analysis-company-desc", description),
+        div(class = "bb-analysis-detail-grid",
+          metric_card("52W Range", get_metric(s, "52w range", "--")),
+          metric_card("Beta", get_metric(s, "beta", "--")),
+          metric_card("Revenue TTM", get_metric(s, "revenue \\(ttm\\)|revenue", "--")),
+          metric_card("EBITDA TTM", get_metric(s, "ebitda", "--")),
+          metric_card("Cash", get_metric(s, "cash", "--")),
+          metric_card("Debt", get_metric(s, "debt", "--"))
+        )
+      )
+    })
+
+    output$valuation_tile_grid <- renderUI({
+      d <- rv$data
+      if (is.null(d)) return(NULL)
+
+      s <- d$summary
+      div(class = "bb-analysis-metric-grid",
+        metric_card("Trailing P/E", get_metric(s, "trailing pe|pe ratio", "--"), "TTM multiple"),
+        metric_card("Forward P/E", get_metric(s, "forward pe", "--"), "Next twelve months"),
+        metric_card("PEG", get_metric(s, "peg", "--"), "Growth-adjusted"),
+        metric_card("Dividend Yield", get_metric(s, "dividend yield", "--"), "Cash return"),
+        metric_card("P/S", get_metric(s, "price to sales|ps ratio", "--"), "Revenue multiple"),
+        metric_card("P/B", get_metric(s, "price to book|pb ratio", "--"), "Book multiple"),
+        metric_card("EV/Revenue", get_metric(s, "ev/revenue", "--"), "Enterprise multiple"),
+        metric_card("EV/EBITDA", get_metric(s, "ev/ebitda", "--"), "Operating cash proxy")
       )
     })
 
     # ── Chart renderers ──
-    output$chart_radar <- plotly::renderPlotly({
+    output$chart_valuation_snapshot <- plotly::renderPlotly({
       d <- rv$data; if (is.null(d)) return(NULL)
-      chart_radar(d$history, d$ticker)
+      chart_valuation_snapshot(d$summary)
     })
-    output$chart_revenue_overview <- plotly::renderPlotly({
+    output$chart_profitability_snapshot <- plotly::renderPlotly({
       d <- rv$data; if (is.null(d)) return(NULL)
-      chart_revenue(d$history)
+      chart_profitability_snapshot(d$summary)
     })
-    output$chart_pe <- plotly::renderPlotly({
+    output$chart_earnings_history <- plotly::renderPlotly({
       d <- rv$data; if (is.null(d)) return(NULL)
-      chart_pe(d$history)
-    })
-    output$chart_pb <- plotly::renderPlotly({
-      d <- rv$data; if (is.null(d)) return(NULL)
-      chart_pb(d$history)
-    })
-    output$chart_ps <- plotly::renderPlotly({
-      d <- rv$data; if (is.null(d)) return(NULL)
-      chart_ps(d$history)
-    })
-    output$chart_ev_ebitda <- plotly::renderPlotly({
-      d <- rv$data; if (is.null(d)) return(NULL)
-      chart_ev_ebitda(d$history)
-    })
-    output$chart_revenue <- plotly::renderPlotly({
-      d <- rv$data; if (is.null(d)) return(NULL)
-      chart_revenue(d$history)
+      chart_earnings_history(d$history)
     })
     output$chart_eps <- plotly::renderPlotly({
       d <- rv$data; if (is.null(d)) return(NULL)
@@ -389,6 +570,14 @@ analysisServer <- function(id) {
     output$chart_liquidity <- plotly::renderPlotly({
       d <- rv$data; if (is.null(d)) return(NULL)
       chart_liquidity(d$history)
+    })
+    output$chart_cash_vs_debt <- plotly::renderPlotly({
+      d <- rv$data; if (is.null(d)) return(NULL)
+      chart_cash_vs_debt(d$history)
+    })
+    output$chart_cashflow_allocation <- plotly::renderPlotly({
+      d <- rv$data; if (is.null(d)) return(NULL)
+      chart_cashflow_allocation(d$history)
     })
 
     # ── Raw data table ──

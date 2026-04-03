@@ -19,6 +19,10 @@ dashboardTabUI <- function(id) {
     ),
 
     fluidRow(
+      column(12, uiOutput(ns("data_source_notice")))
+    ),
+
+    fluidRow(
       class = "bb-kpi-row",
       column(2, uiOutput(ns("kpi_portfolio_value"))),
       column(2, uiOutput(ns("kpi_day_change"))),
@@ -221,6 +225,36 @@ dashboardTabServer <- function(id) {
 
     output$last_update <- renderText({
       format(all_data()$time, "%H:%M:%S")
+    })
+
+    output$data_source_notice <- renderUI({
+      active_etfs <- rv$portfolio$ticker[rv$portfolio$ticker %in% names(rv$xray_holdings)]
+      active_etfs <- unique(active_etfs)
+
+      xray_value <- if (!isTRUE(input$xray_on)) {
+        "Off on current screen"
+      } else if (length(active_etfs) == 0) {
+        "Enabled, waiting for ETF holdings"
+      } else {
+        parts <- vapply(active_etfs, function(tkr) {
+          src <- attr(rv$xray_holdings[[tkr]], "source_label")
+          paste0(tkr, " -> ", if (!is.null(src) && nzchar(src)) src else "unknown source")
+        }, character(1), USE.NAMES = FALSE)
+        paste(parts, collapse = " | ")
+      }
+
+      bb_data_source_notice(c(
+        "Portfolio" = "Local CSV: user_data/portfolio.csv",
+        "Prices / FX" = paste0(
+          "Yahoo Finance v8 chart API",
+          if (!is.null(rv$quotes_fetched_at)) {
+            paste0(" · refreshed ", format_notice_timestamp(rv$quotes_fetched_at))
+          } else {
+            ""
+          }
+        ),
+        "ETF X-Ray" = xray_value
+      ))
     })
 
     output$holdings_hint <- renderText({

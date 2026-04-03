@@ -11,6 +11,8 @@ suppressPackageStartupMessages({
 # HTTP requests independently within the same session.
 .quote_cache     <- new.env(parent = emptyenv())
 .quote_cache_ttl <- 30L  # seconds before a cached quote is considered stale
+.history_cache     <- new.env(parent = emptyenv())
+.history_cache_ttl <- 300L  # seconds before a cached history series is considered stale
 
 .cache_get <- function(ticker) {
   key <- make.names(ticker)
@@ -23,6 +25,24 @@ suppressPackageStartupMessages({
 
 .cache_put <- function(q) {
   if (!is.null(q)) .quote_cache[[make.names(q$ticker)]] <- q
+}
+
+.history_cache_key <- function(ticker, period) {
+  make.names(paste(ticker, period, sep = "__"))
+}
+
+.history_cache_get <- function(ticker, period) {
+  key <- .history_cache_key(ticker, period)
+  entry <- .history_cache[[key]]
+  if (is.null(entry)) return(NULL)
+  if (as.numeric(difftime(Sys.time(), entry$time, units = "secs")) >= .history_cache_ttl)
+    return(NULL)
+  entry$data
+}
+
+.history_cache_put <- function(ticker, period, data) {
+  key <- .history_cache_key(ticker, period)
+  .history_cache[[key]] <- list(time = Sys.time(), data = data)
 }
 
 
@@ -52,6 +72,8 @@ fetch_quote <- function(ticker) {
       price  = round(price, 2),
       change = round(price - prev, 2),
       pct    = round((price - prev) / prev * 100, 2),
+      low_52w = as.numeric(meta$fiftyTwoWeekLow),
+      high_52w = as.numeric(meta$fiftyTwoWeekHigh),
       currency = as.character(meta$currency),
       volume = as.numeric(meta$regularMarketVolume),
       time   = Sys.time()
@@ -106,7 +128,8 @@ fetch_quotes <- function(tickers, workers = 5L) {
       q   <- new_results[[i]]
       if (is.null(q)) {
         .cache_put(list(ticker = tkr, price = NA_real_, change = NA_real_,
-                        pct = NA_real_, currency = NA_character_,
+                        pct = NA_real_, low_52w = NA_real_,
+                        high_52w = NA_real_, currency = NA_character_,
                         volume = NA_real_, time = Sys.time()))
       } else {
         .cache_put(q)
@@ -119,7 +142,8 @@ fetch_quotes <- function(tickers, workers = 5L) {
     q <- .cache_get(tkr)
     if (is.null(q))
       list(ticker = tkr, price = NA_real_, change = NA_real_,
-           pct = NA_real_, currency = NA_character_,
+           pct = NA_real_, low_52w = NA_real_, high_52w = NA_real_,
+           currency = NA_character_,
            volume = NA_real_, time = Sys.time())
     else
       q
@@ -130,16 +154,27 @@ fetch_quotes <- function(tickers, workers = 5L) {
 # ── Historical price series (for sparklines / mini charts) ───
 
 fetch_history <- function(ticker, period = "6mo") {
+  cached <- .history_cache_get(ticker, period)
+  if (!is.null(cached)) return(cached)
+
   tryCatch({
     if (requireNamespace("quantmod", quietly = TRUE)) {
+      lookback_days <- switch(period,
+        "1mo" = 35,
+        "3mo" = 100,
+        "6mo" = 190,
+        "1y" = 370,
+        190
+      )
       env <- new.env()
-      quantmod::getSymbols(ticker, src = "yahoo", from = Sys.Date() - 180,
+      quantmod::getSymbols(ticker, src = "yahoo", from = Sys.Date() - lookback_days,
                            env = env, auto.assign = TRUE)
       xts_obj <- env[[ticker]]
       df <- data.frame(
         date  = zoo::index(xts_obj),
         close = as.numeric(quantmod::Cl(xts_obj))
       )
+      .history_cache_put(ticker, period, df)
       return(df)
     }
     fetch_history_fallback(ticker, period)
@@ -159,10 +194,12 @@ fetch_history_fallback <- function(ticker, period = "6mo") {
     js   <- jsonlite::fromJSON(paste(resp, collapse = ""))
     ts   <- js$chart$result[[1]]$timestamp
     cl   <- js$chart$result[[1]]$indicators$quote[[1]]$close[[1]]
-    data.frame(
+    df <- data.frame(
       date  = as.Date(as.POSIXct(ts, origin = "1970-01-01")),
       close = round(as.numeric(cl), 2)
     )
+    .history_cache_put(ticker, period, df)
+    df
   }, error = function(e) {
     data.frame(date = as.Date(character()), close = numeric())
   })

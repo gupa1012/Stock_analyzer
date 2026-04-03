@@ -25,6 +25,10 @@ sentimentUI <- function(id) {
       ))
     ),
 
+    fluidRow(
+      column(12, uiOutput(ns("data_source_notice")))
+    ),
+
     # ── Sentiment gauge row ──
     fluidRow(
       class = "bb-kpi-row",
@@ -120,6 +124,30 @@ sentimentServer <- function(id) {
           setProgress(1)
         }
       )
+
+      output$data_source_notice <- renderUI({
+        r <- rv$result
+
+        sources_line <- if (is.null(r) || is.null(r$by_source) || nrow(r$by_source) == 0) {
+          "Financial Times RSS, Handelsblatt RSS, Reuters via Google News, Google News ticker searches (EN + DE)"
+        } else {
+          paste(unique(r$by_source$source), collapse = " | ")
+        }
+
+        scope_line <- if (is.null(r)) {
+          "No scan yet"
+        } else if (!is.null(r$ticker) && nzchar(r$ticker)) {
+          paste0("Ticker scan for ", r$ticker)
+        } else {
+          "Market overview scan"
+        }
+
+        bb_data_source_notice(c(
+          "Current View" = scope_line,
+          "Feeds" = sources_line,
+          "Method" = "RSS headlines scored with an English + German financial lexicon"
+        ))
+      })
       showNotification("Market sentiment scan complete",
                        type = "message", duration = 4)
     })
