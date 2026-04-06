@@ -27,22 +27,41 @@ suppressPackageStartupMessages({
   if (!is.null(q)) .quote_cache[[make.names(q$ticker)]] <- q
 }
 
-.history_cache_key <- function(ticker, period) {
-  make.names(paste(ticker, period, sep = "__"))
+.history_cache_key <- function(ticker, period, field = "close") {
+  make.names(paste(ticker, period, field, sep = "__"))
 }
 
-.history_cache_get <- function(ticker, period) {
-  key <- .history_cache_key(ticker, period)
+.history_cache_get <- function(ticker, period, field = "close") {
+  key <- .history_cache_key(ticker, period, field)
   entry <- .history_cache[[key]]
   if (is.null(entry)) return(NULL)
   if (as.numeric(difftime(Sys.time(), entry$time, units = "secs")) >= .history_cache_ttl)
     return(NULL)
+  if (is.null(entry$data)) return(NULL)
+  if (is.data.frame(entry$data)) {
+    if (nrow(entry$data) == 0) return(NULL)
+    if (!"close" %in% names(entry$data)) return(NULL)
+    if (!any(is.finite(entry$data$close), na.rm = TRUE)) return(NULL)
+  }
   entry$data
 }
 
-.history_cache_put <- function(ticker, period, data) {
-  key <- .history_cache_key(ticker, period)
+.history_cache_put <- function(ticker, period, data, field = "close") {
+  key <- .history_cache_key(ticker, period, field)
   .history_cache[[key]] <- list(time = Sys.time(), data = data)
+}
+
+json_numeric_series <- function(x) {
+  if (is.null(x)) return(numeric())
+
+  if (!is.list(x)) {
+    return(as.numeric(x))
+  }
+
+  vapply(x, function(item) {
+    if (is.null(item) || length(item) == 0) return(NA_real_)
+    suppressWarnings(as.numeric(item[[1]]))
+  }, numeric(1), USE.NAMES = FALSE)
 }
 
 
@@ -151,56 +170,119 @@ fetch_quotes <- function(tickers, workers = 5L) {
   do.call(rbind, lapply(results, as.data.frame, stringsAsFactors = FALSE))
 }
 
-# ── Historical price series (for sparklines / mini charts) ───
+# ── Historical price series (for sparklines / analytics) ─────
 
-fetch_history <- function(ticker, period = "6mo") {
-  cached <- .history_cache_get(ticker, period)
-  if (!is.null(cached)) return(cached)
+download_history_series <- function(ticker, period = "6mo", field = c("close", "adjusted")) {
+  field <- match.arg(field)
 
-  tryCatch({
-    if (requireNamespace("quantmod", quietly = TRUE)) {
-      lookback_days <- switch(period,
-        "1mo" = 35,
-        "3mo" = 100,
-        "6mo" = 190,
-        "1y" = 370,
-        190
-      )
-      env <- new.env()
-      quantmod::getSymbols(ticker, src = "yahoo", from = Sys.Date() - lookback_days,
-                           env = env, auto.assign = TRUE)
-      xts_obj <- env[[ticker]]
-      df <- data.frame(
-        date  = zoo::index(xts_obj),
-        close = as.numeric(quantmod::Cl(xts_obj))
-      )
-      .history_cache_put(ticker, period, df)
-      return(df)
-    }
-    fetch_history_fallback(ticker, period)
-  }, error = function(e) {
-    fetch_history_fallback(ticker, period)
-  })
-}
-
-fetch_history_fallback <- function(ticker, period = "6mo") {
   tryCatch({
     url <- paste0(
       "https://query1.finance.yahoo.com/v8/finance/chart/",
       utils::URLencode(ticker),
-      "?range=", period, "&interval=1d"
+      "?range=", period, "&interval=1d&includeAdjustedClose=true"
     )
     resp <- readLines(url, warn = FALSE)
-    js   <- jsonlite::fromJSON(paste(resp, collapse = ""))
-    ts   <- js$chart$result[[1]]$timestamp
-    cl   <- js$chart$result[[1]]$indicators$quote[[1]]$close[[1]]
-    df <- data.frame(
-      date  = as.Date(as.POSIXct(ts, origin = "1970-01-01")),
-      close = round(as.numeric(cl), 2)
+    js <- jsonlite::fromJSON(
+      paste(resp, collapse = ""),
+      simplifyVector = FALSE
     )
-    .history_cache_put(ticker, period, df)
-    df
+
+    result <- js$chart$result[[1]]
+    if (is.null(result)) {
+      return(data.frame(date = as.Date(character()), close = numeric()))
+    }
+
+    timestamps <- json_numeric_series(result$timestamp)
+    close_vals <- json_numeric_series(result$indicators$quote[[1]]$close)
+    adj_vals <- NULL
+
+    if (!is.null(result$indicators$adjclose) && length(result$indicators$adjclose) > 0) {
+      adj_vals <- json_numeric_series(result$indicators$adjclose[[1]]$adjclose)
+    }
+
+    series_vals <- if (identical(field, "adjusted") && !is.null(adj_vals)) {
+      adj_vals
+    } else {
+      close_vals
+    }
+
+    df <- data.frame(
+      date = as.Date(as.POSIXct(timestamps, origin = "1970-01-01", tz = "UTC")),
+      close = as.numeric(series_vals),
+      stringsAsFactors = FALSE
+    )
+
+    df <- df[!is.na(df$date) & is.finite(df$close) & df$close > 0, , drop = FALSE]
+    df <- df[!duplicated(df$date), , drop = FALSE]
+    df[order(df$date), , drop = FALSE]
   }, error = function(e) {
     data.frame(date = as.Date(character()), close = numeric())
   })
+}
+
+fetch_history <- function(ticker, period = "6mo", field = c("close", "adjusted")) {
+  field <- match.arg(field)
+  cached <- .history_cache_get(ticker, period, field)
+  if (!is.null(cached)) return(cached)
+
+  df <- download_history_series(ticker, period = period, field = field)
+  .history_cache_put(ticker, period, df, field = field)
+  df
+}
+
+fetch_history_batch <- function(tickers, period = "6mo", field = c("close", "adjusted"), workers = 4L) {
+  field <- match.arg(field)
+  tickers <- unique(as.character(tickers))
+  tickers <- tickers[!is.na(tickers) & nzchar(tickers)]
+  if (length(tickers) == 0) return(setNames(list(), character()))
+
+  uncached <- Filter(function(tkr) is.null(.history_cache_get(tkr, period, field)), tickers)
+
+  if (length(uncached) > 0) {
+    n_workers <- min(as.integer(workers), length(uncached))
+    if (is.na(n_workers) || n_workers < 1L) n_workers <- 1L
+
+    if (n_workers > 1L) {
+      cl <- parallel::makeCluster(n_workers, type = "PSOCK")
+      on.exit(parallel::stopCluster(cl), add = TRUE)
+
+      parallel::clusterExport(
+        cl,
+        varlist = c("download_history_series", "json_numeric_series"),
+        envir = .GlobalEnv
+      )
+      parallel::clusterEvalQ(cl, {
+        suppressPackageStartupMessages(library(jsonlite))
+        NULL
+      })
+
+      new_results <- parallel::parLapply(cl, uncached, function(tkr) {
+        download_history_series(tkr, period = period, field = field)
+      })
+    } else {
+      new_results <- lapply(uncached, function(tkr) {
+        download_history_series(tkr, period = period, field = field)
+      })
+    }
+
+    for (i in seq_along(uncached)) {
+      .history_cache_put(uncached[[i]], period, new_results[[i]], field = field)
+    }
+  }
+
+  out <- lapply(tickers, function(tkr) {
+    cached <- .history_cache_get(tkr, period, field)
+    if (is.null(cached)) {
+      data.frame(date = as.Date(character()), close = numeric())
+    } else {
+      cached
+    }
+  })
+
+  names(out) <- tickers
+  out
+}
+
+fetch_history_fallback <- function(ticker, period = "6mo", field = c("close", "adjusted")) {
+  fetch_history(ticker, period = period, field = field)
 }

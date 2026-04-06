@@ -110,6 +110,106 @@ dashboardTabUI <- function(id) {
           plotly::plotlyOutput(ns("chart_pnl_bar"), height = "320px")
         )
       )
+    ),
+
+    fluidRow(
+      column(12,
+        div(class = "bb-panel",
+          div(class = "bb-panel-toolbar",
+            h4(icon("chart-line"), "PORTFOLIO PERFORMANCE · 5Y",
+               class = "bb-panel-title", style = "margin-bottom:0;"),
+            div(class = "bb-inline-controls",
+              selectInput(
+                ns("performance_benchmark"),
+                "Benchmark",
+                choices = c("None" = "none", "MSCI World" = "msci_world", "S&P 500" = "sp500"),
+                selected = "none",
+                width = "150px"
+              )
+            )
+          ),
+          div(class = "bb-analytics-hint",
+              textOutput(ns("performance_status"), inline = TRUE)),
+          plotly::plotlyOutput(ns("chart_performance_5y"), height = "360px")
+        )
+      )
+    ),
+
+    fluidRow(
+      column(12,
+        div(class = "bb-panel bb-analytics-panel",
+          div(class = "bb-panel-toolbar", style = "align-items:flex-end;",
+            h4(icon("project-diagram"), "CORRELATION & DIVERSIFICATION",
+               class = "bb-panel-title", style = "margin-bottom:0;"),
+            div(class = "bb-inline-controls",
+              selectInput(ns("analytics_period"), "Lookback",
+                          choices = c("3M" = "3mo", "6M" = "6mo", "1Y" = "1y"),
+                          selected = "1y", width = "110px"),
+              numericInput(ns("analytics_add_weight"), "Test weight %",
+                           value = 10, min = 1, max = 25, step = 1, width = "110px"),
+              actionButton(ns("btn_run_analytics"), "RUN SCAN",
+                           class = "bb-btn-primary", icon = icon("sync-alt"))
+            )
+          ),
+          div(class = "bb-analytics-hint",
+              textOutput(ns("analytics_status"), inline = TRUE)),
+
+          fluidRow(
+            class = "bb-kpi-row bb-analytics-kpi-row",
+            column(3, uiOutput(ns("kpi_risk_vol"))),
+            column(3, uiOutput(ns("kpi_risk_beta"))),
+            column(3, uiOutput(ns("kpi_risk_gold"))),
+            column(3, uiOutput(ns("kpi_risk_diversifier")))
+          ),
+
+          fluidRow(
+            column(7,
+              div(class = "bb-analytics-block",
+                div(class = "bb-analytics-subtitle", "Portfolio / Holdings Correlation Map"),
+                plotly::plotlyOutput(ns("chart_corr_heatmap"), height = "430px")
+              )
+            ),
+            column(5,
+              div(class = "bb-analytics-block",
+                div(class = "bb-analytics-subtitle", "Portfolio vs Benchmarks"),
+                div(class = "bb-table-scroll",
+                  DT::dataTableOutput(ns("tbl_benchmarks"))
+                )
+              )
+            )
+          ),
+
+          fluidRow(
+            column(6,
+              div(class = "bb-analytics-block",
+                div(class = "bb-analytics-subtitle", "Potential Risk Reducers"),
+                div(class = "bb-table-scroll",
+                  DT::dataTableOutput(ns("tbl_diversifiers"))
+                )
+              )
+            ),
+            column(6,
+              div(class = "bb-analytics-block",
+                div(class = "bb-analytics-subtitle", "Similar Stocks to Current Holdings"),
+                div(class = "bb-table-scroll",
+                  DT::dataTableOutput(ns("tbl_similar"))
+                )
+              )
+            )
+          ),
+
+          fluidRow(
+            column(12,
+              div(class = "bb-analytics-block",
+                div(class = "bb-analytics-subtitle", "CAPM + ETF Factor Proxies"),
+                div(class = "bb-table-scroll",
+                  DT::dataTableOutput(ns("tbl_factors"))
+                )
+              )
+            )
+          )
+        )
+      )
     )
   )
 }
@@ -125,8 +225,19 @@ dashboardTabServer <- function(id) {
       quotes = NULL,
       xray_holdings = list(),
       xray_fetched_at = NULL,
-      quotes_fetched_at = NULL
+      quotes_fetched_at = NULL,
+      performance_series = NULL,
+      performance_fetched_at = NULL,
+      portfolio_analytics = NULL,
+      analytics_fetched_at = NULL
     )
+
+    observeEvent(rv$refresh, {
+      rv$performance_series <- NULL
+      rv$performance_fetched_at <- NULL
+      rv$portfolio_analytics <- NULL
+      rv$analytics_fetched_at <- NULL
+    }, ignoreInit = TRUE)
 
     observeEvent(input$btn_refresh, {
       rv$refresh <- rv$refresh + 1
@@ -253,8 +364,71 @@ dashboardTabServer <- function(id) {
             ""
           }
         ),
-        "ETF X-Ray" = xray_value
+        "Performance Chart" = "Yahoo adjusted daily history · 5Y current-holdings backcast with optional EUR benchmark overlay",
+        "ETF X-Ray" = xray_value,
+        "Correlation / Factors" = if (is.null(rv$portfolio_analytics)) {
+          "On demand via Yahoo adjusted daily history + data/sp500_tickers.csv"
+        } else {
+          paste0(
+            "Yahoo adjusted daily history + EUR FX · ",
+            rv$portfolio_analytics$period,
+            " scan over ", rv$portfolio_analytics$universe_size,
+            " S&P 500 names + ETF / commodity proxies"
+          )
+        }
       ))
+    })
+
+    observe({
+      rv$refresh
+      pf <- rv$portfolio
+      req(nrow(pf) > 0)
+
+      rv$performance_series <- tryCatch(
+        build_portfolio_performance_data(
+          portfolio_df = pf,
+          quotes_df = rv$quotes,
+          benchmark_key = input$performance_benchmark,
+          period = "5y",
+          workers = 4L
+        ),
+        error = function(e) NULL
+      )
+      rv$performance_fetched_at <- Sys.time()
+    })
+
+    output$performance_status <- renderText({
+      if (nrow(rv$portfolio) == 0) {
+        return("Keine Positionen vorhanden.")
+      }
+
+      benchmark_label <- PORTFOLIO_PERFORMANCE_BENCHMARKS$label[
+        match(input$performance_benchmark, PORTFOLIO_PERFORMANCE_BENCHMARKS$key)
+      ]
+      if (length(benchmark_label) == 0 || is.na(benchmark_label)) benchmark_label <- "No Benchmark"
+
+      paste0(
+        "5Y-Backcast des aktuellen Holdings-Mix in EUR",
+        if (!identical(benchmark_label, "No Benchmark")) paste0(" · Benchmark: ", benchmark_label) else "",
+        if (!is.null(rv$performance_fetched_at)) paste0(" · refreshed ", format_notice_timestamp(rv$performance_fetched_at)) else ""
+      )
+    })
+
+    output$analytics_status <- renderText({
+      if (nrow(rv$portfolio) == 0) {
+        return("Keine Positionen vorhanden.")
+      }
+
+      if (is.null(rv$portfolio_analytics)) {
+        return("On-demand Scan mit Yahoo-Adjusted-Close, EUR-FX-Konvertierung, Gold / Index-Benchmarks und S&P-500-Similarity-Universe. Alpha Vantage wird hier nicht verwendet.")
+      }
+
+      paste0(
+        "Letzter Scan: ", format(rv$analytics_fetched_at, "%d.%m.%Y %H:%M"),
+        " · Lookback ", toupper(rv$portfolio_analytics$period),
+        " · ", rv$portfolio_analytics$observations, " Handelstage",
+        " · Diversifier-Test mit +", round(rv$portfolio_analytics$add_weight * 100), "% Zielgewicht"
+      )
     })
 
     output$holdings_hint <- renderText({
@@ -298,6 +472,59 @@ dashboardTabServer <- function(id) {
       d <- all_data()
       best <- find_best_performer(d$pf, d$pf_q)
       bb_kpi("TOP MOVER", best$label, colour = best$colour)
+    })
+
+    output$kpi_risk_vol <- renderUI({
+      analytics <- rv$portfolio_analytics
+      value <- if (is.null(analytics)) "--" else format_pct_plain(analytics$portfolio_vol, digits = 1)
+      bb_kpi("ANN. VOL", value, colour = "#f5a623")
+    })
+
+    output$kpi_risk_beta <- renderUI({
+      analytics <- rv$portfolio_analytics
+      value <- if (is.null(analytics)) "--" else format_num(analytics$capm_beta, digits = 2)
+      bb_kpi("CAPM BETA", value, colour = "#00bfa5")
+    })
+
+    output$kpi_risk_gold <- renderUI({
+      analytics <- rv$portfolio_analytics
+      value <- if (is.null(analytics)) "--" else format_pct_signed(analytics$gold_corr * 100, digits = 1)
+      bb_kpi("CORR TO GOLD", value, colour = "#ffd54f")
+    })
+
+    output$kpi_risk_diversifier <- renderUI({
+      analytics <- rv$portfolio_analytics
+      value <- if (is.null(analytics)) "--" else analytics$best_diversifier
+      bb_kpi("BEST DIVERSIFIER", value, colour = "#64dd17")
+    })
+
+    observeEvent(input$btn_run_analytics, {
+      req(nrow(rv$portfolio) > 0)
+
+      add_weight <- max(0.01, min(0.25, as.numeric(input$analytics_add_weight) / 100))
+
+      withProgress(message = "Building correlation scan", value = 0, {
+        rv$portfolio_analytics <- build_portfolio_analytics(
+          portfolio_df = rv$portfolio,
+          quotes_df = rv$quotes,
+          period = input$analytics_period,
+          add_weight = add_weight,
+          workers = 4L,
+          progress = function(value = NULL, detail = NULL) {
+            if (!is.null(value)) {
+              if (is.null(detail)) {
+                setProgress(value = value)
+              } else {
+                setProgress(value = value, detail = detail)
+              }
+            } else if (!is.null(detail)) {
+              setProgress(detail = detail)
+            }
+          }
+        )
+      })
+
+      rv$analytics_fetched_at <- Sys.time()
     })
 
     holdings_display <- reactive({
@@ -479,6 +706,199 @@ dashboardTabServer <- function(id) {
                        zeroline = TRUE,
                        zerolinecolor = "rgba(255,255,255,0.2)"),
           margin = list(l = 50, r = 10, t = 10, b = 40)
+        )
+    })
+
+    output$chart_performance_5y <- plotly::renderPlotly({
+      perf <- rv$performance_series
+      if (is.null(perf) || is.null(perf$series) || nrow(perf$series) == 0) {
+        return(bb_empty_chart("No history for current holdings mix"))
+      }
+
+      perf_df <- perf$series
+      color_map <- c(
+        "Portfolio" = "#f5a623",
+        "MSCI World" = "#00bfa5",
+        "S&P 500" = "#42a5f5"
+      )
+
+      plot_obj <- plotly::plot_ly()
+      series_names <- unique(perf_df$series)
+      for (series_name in series_names) {
+        part <- perf_df[perf_df$series == series_name, , drop = FALSE]
+        plot_obj <- plot_obj |>
+          plotly::add_lines(
+            data = part,
+            x = ~date,
+            y = ~indexed,
+            name = series_name,
+            line = list(
+              color = if (!is.null(color_map[[series_name]])) color_map[[series_name]] else "#c7c7d1",
+              width = if (identical(series_name, "Portfolio")) 3 else 2
+            ),
+            hovertemplate = paste0(series_name, "<br>%{x|%d.%m.%Y}<br>Index: %{y:.1f}<extra></extra>")
+          )
+      }
+
+      plot_obj |>
+        plotly::layout(
+          paper_bgcolor = "transparent",
+          plot_bgcolor = "transparent",
+          hovermode = "x unified",
+          legend = list(orientation = "h", x = 0, y = 1.12, font = list(color = "#c7c7d1")),
+          xaxis = list(
+            color = "#6c757d",
+            gridcolor = "rgba(255,255,255,0.05)",
+            title = ""
+          ),
+          yaxis = list(
+            color = "#6c757d",
+            gridcolor = "rgba(255,255,255,0.05)",
+            title = "Indexed (100 = first overlap)"
+          ),
+          margin = list(l = 60, r = 10, t = 10, b = 40),
+          font = list(color = "#e0e0e0", family = "JetBrains Mono, Consolas, monospace")
+        )
+    })
+
+    empty_benchmark_table <- function() {
+      empty_analytics_table(c(
+        "Instrument", "Ticker", "Category", "Corr", "Beta", "Ann.Return", "Ann.Vol", "Obs",
+        "corr_num", "beta_num", "ann_return_num", "ann_vol_num"
+      ))
+    }
+
+    empty_diversifier_table <- function(weight_pct) {
+      empty_analytics_table(c(
+        "Candidate", "Ticker", "Bucket", "Corr", "Ann.Vol",
+        paste0("Port.Vol @ +", weight_pct, "%"), "Delta Vol", "Obs",
+        "projected_vol_num", "delta_vol_num", "corr_num"
+      ))
+    }
+
+    empty_similar_table <- function() {
+      empty_analytics_table(c("Held", "Candidate", "Ticker", "Sector", "Corr", "Obs", "corr_num"))
+    }
+
+    empty_factor_table <- function() {
+      empty_analytics_table(c(
+        "Factor", "Proxy", "Beta", "Corr", "Adj.R2", "Alpha p.a.", "Obs",
+        "beta_num", "corr_num", "r2_num", "alpha_num"
+      ))
+    }
+
+    output$tbl_benchmarks <- DT::renderDataTable({
+      tbl <- if (is.null(rv$portfolio_analytics)) empty_benchmark_table() else rv$portfolio_analytics$benchmark_table
+      DT::datatable(tbl,
+        options = list(
+          dom = "t",
+          pageLength = 12,
+          ordering = TRUE,
+          order = list(list(8, "desc")),
+          columnDefs = list(
+            list(className = "dt-right", targets = c(3, 4, 5, 6, 7)),
+            list(visible = FALSE, targets = c(8, 9, 10, 11))
+          )
+        ),
+        rownames = FALSE,
+        class = "cell-border compact"
+      )
+    })
+
+    output$tbl_diversifiers <- DT::renderDataTable({
+      weight_pct <- max(1, min(25, round(as.numeric(input$analytics_add_weight))))
+      tbl <- if (is.null(rv$portfolio_analytics)) {
+        empty_diversifier_table(weight_pct)
+      } else {
+        rv$portfolio_analytics$diversifier_table
+      }
+
+      DT::datatable(tbl,
+        options = list(
+          dom = "t",
+          pageLength = 12,
+          ordering = TRUE,
+          order = list(list(8, "asc")),
+          columnDefs = list(
+            list(className = "dt-right", targets = c(3, 4, 5, 6, 7)),
+            list(visible = FALSE, targets = c(8, 9, 10))
+          )
+        ),
+        rownames = FALSE,
+        class = "cell-border compact"
+      )
+    })
+
+    output$tbl_similar <- DT::renderDataTable({
+      tbl <- if (is.null(rv$portfolio_analytics)) empty_similar_table() else rv$portfolio_analytics$similar_table
+      DT::datatable(tbl,
+        options = list(
+          dom = "t",
+          pageLength = 12,
+          ordering = TRUE,
+          order = list(list(6, "desc")),
+          columnDefs = list(
+            list(className = "dt-right", targets = c(4, 5)),
+            list(visible = FALSE, targets = c(6))
+          )
+        ),
+        rownames = FALSE,
+        class = "cell-border compact"
+      )
+    })
+
+    output$tbl_factors <- DT::renderDataTable({
+      tbl <- if (is.null(rv$portfolio_analytics)) empty_factor_table() else rv$portfolio_analytics$factor_table
+      DT::datatable(tbl,
+        options = list(
+          dom = "t",
+          pageLength = 10,
+          ordering = TRUE,
+          order = list(list(9, "desc")),
+          columnDefs = list(
+            list(className = "dt-right", targets = c(2, 3, 4, 5, 6)),
+            list(visible = FALSE, targets = c(7, 8, 9, 10))
+          )
+        ),
+        rownames = FALSE,
+        class = "cell-border compact"
+      )
+    })
+
+    output$chart_corr_heatmap <- plotly::renderPlotly({
+      analytics <- rv$portfolio_analytics
+      if (is.null(analytics) || length(analytics$heatmap$labels) == 0) {
+        return(bb_empty_chart("Run scan to load correlation map"))
+      }
+
+      corr_mat <- analytics$heatmap$matrix
+      labels <- analytics$heatmap$labels
+      if (length(labels) == 0) {
+        return(bb_empty_chart("Insufficient overlap"))
+      }
+
+      row_order <- rev(seq_along(labels))
+      z_vals <- corr_mat[row_order, , drop = FALSE]
+
+      plotly::plot_ly(
+        x = labels,
+        y = rev(labels),
+        z = z_vals,
+        type = "heatmap",
+        zmin = -1,
+        zmax = 1,
+        colors = grDevices::colorRampPalette(
+          c("#0b486b", "#141422", "#f5a623")
+        )(21),
+        hovertemplate = "%{y} vs %{x}<br>Corr: %{z:.2f}<extra></extra>"
+      ) |>
+        plotly::layout(
+          paper_bgcolor = "transparent",
+          plot_bgcolor = "transparent",
+          margin = list(l = 70, r = 10, t = 10, b = 80),
+          xaxis = list(color = "#c7c7d1", tickangle = -35),
+          yaxis = list(color = "#c7c7d1"),
+          font = list(color = "#e0e0e0", family = "JetBrains Mono, Consolas, monospace")
         )
     })
 

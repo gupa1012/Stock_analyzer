@@ -11,7 +11,7 @@ A **Bloomberg-inspired** Shiny app for private portfolio management, watchlist t
 
 | Module | Description |
 |--------|-------------|
-| **Portfolio** | Combined start page with KPIs, add/remove position controls, allocation, a full holdings table, and an **ETF X-Ray** look-through panel. When X-Ray is on, the main holdings list expands with ETF-derived underlying exposures |
+| **Portfolio** | Combined start page with KPIs, add/remove position controls, allocation, a full holdings table, a **5Y portfolio performance chart** with optional benchmark overlay, an **ETF X-Ray** look-through panel, plus a **Correlation & Diversification** scan with benchmark links, factor proxies, risk-reducer ideas, and similar-stock matches |
 | **Watchlist** | Track stocks you're watching with target prices, daily move, 52-week range, inline mini charts, and a click-linked detail chart |
 | **Analysis** | Valuation-first fundamental dashboard with Alpha Vantage overview-first loading, on-demand statement history, SEC EDGAR fallback for US tickers, Yahoo fallback, and demo mode |
 | **Sentiment** | News sentiment scoring using Financial Times, Handelsblatt, and Reuters RSS feeds with a Loughran-McDonald–inspired financial lexicon |
@@ -76,6 +76,7 @@ Stock_analyzer/
 ├── R/
 │   ├── data_manager.R     # Portfolio & watchlist CSV persistence
 │   ├── market_data.R      # Yahoo Finance price + FX fetching (v8 chart API)
+│   ├── portfolio_analytics.R # Portfolio correlation / factor / diversification analytics
 │   ├── sentiment.R        # News sentiment analysis engine
 │   ├── mod_dashboard.R    # Combined portfolio dashboard / home tab
 │   ├── mod_portfolio.R    # Legacy portfolio module (not the primary entry tab)
@@ -117,8 +118,40 @@ All four primary tabs now show a compact **Data Sources** hint near the top so y
 
 The Watchlist table uses `reactable` and now has a Bloomberg-style dark theme. It shows price, a stacked daily move cell, a 52-week range slider with the current price marker inside the stock's own range, and an inline sparkline per ticker. Clicking a row updates the price chart on the right, so there is no separate chart ticker selector.
 
+The top Portfolio area also includes a **5Y performance chart** for the current holdings mix. It backcasts today's portfolio composition through the last five years and can optionally overlay:
+- **MSCI World** via the Yahoo Finance ETF proxy `URTH`
+- **S&P 500** via `SPY`
+
+The chart is EUR-based where FX history is available and is meant as a holdings-mix comparison, not as a transaction-accurate reconstruction of past deposits, withdrawals, or historical position sizes.
+
+### Correlation & Diversification Scan
+The Portfolio dashboard now includes an on-demand **Correlation & Diversification** block below the allocation and P&L charts.
+
+It is designed to answer questions like:
+- how strongly the portfolio correlates with **Gold**, the **S&P 500**, long-duration bonds, defensive sectors, and other benchmark sleeves
+- which additional names or ETFs could lower the portfolio's annualized volatility if a small weight is added
+- which listed stocks move very similarly to existing direct holdings
+- whether the portfolio currently shows stronger market, quality, momentum, low-volatility, or gold-hedge behavior via simple **CAPM / factor proxy** regressions
+
+The scan is **on demand** to avoid unnecessary network traffic. It uses:
+- **Yahoo Finance adjusted daily history** for held names, benchmarks, factor-proxy ETFs, and candidate stocks
+- **Yahoo FX history** to convert non-EUR assets into EUR return series before portfolio-level comparisons are calculated
+- the local `data/sp500_tickers.csv` universe for similar-stock and diversification candidate searches
+
+Outputs in the dashboard:
+- a correlation heatmap for the portfolio, top holdings, and selected benchmarks
+- a benchmark table showing correlation, beta, annual return, and annualized volatility versus the portfolio
+- a **Potential Risk Reducers** table that simulates adding a candidate at a configurable test weight (default `10%`) and ranks names that reduce overall portfolio volatility
+- a **Similar Stocks** table that finds highly price-correlated S&P 500 names for each direct stock position
+- a factor table with CAPM beta plus ETF-based proxy factors such as value, momentum, quality, and low-volatility
+
+Related portfolio charting on the start page:
+- a **5Y indexed holdings-mix chart** with optional `MSCI World` or `S&P 500` overlay for quick long-horizon context before drilling into correlations
+
+This feature does **not** use Alpha Vantage and therefore does not consume the free-tier request budget.
+
 ### Base Currency
-Portfolio, watchlist table values, and X-Ray effective values are shown in **EUR**. For non-EUR securities the app fetches Yahoo FX pairs dynamically and converts price / market value / P&L into EUR.
+Portfolio, watchlist table values, X-Ray effective values, and portfolio analytics return series are shown or evaluated in **EUR**. For non-EUR securities the app fetches Yahoo FX pairs dynamically and converts price / market value / P&L into EUR.
 
 Currently required FX pairs for the sample portfolio:
 - `USDEUR=X`
@@ -194,5 +227,7 @@ Articles are scored using a curated financial sentiment lexicon (Loughran-McDona
 - For US tickers, SEC EDGAR is now the preferred source for statement history; Alpha Vantage statements are used mainly for international tickers or when SEC coverage is insufficient.
 - Sentiment analysis uses free RSS feeds — no API keys needed.
 - Portfolio and watchlist quotes are cached for 30 seconds to avoid duplicate requests across tabs.
+- Historical Yahoo price series used by the portfolio performance and correlation scans are also cached in-session by ticker, lookback window, and field (`close` vs `adjusted`).
+- The portfolio correlation scan uses Yahoo Finance plus the local S&P 500 universe and does not spend Alpha Vantage requests.
 - Mobile and desktop are served by the same app; layout mode can be forced with the header selector or a `?mode=` query parameter.
 - The app is designed for personal/research use.

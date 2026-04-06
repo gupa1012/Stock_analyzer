@@ -378,6 +378,41 @@ body, .wrapper {
   margin-top: 2px;
 }
 
+.bb-analytics-panel {
+  margin-top: 10px;
+}
+
+.bb-analytics-hint {
+  margin: 2px 0 14px;
+  font-family: var(--bb-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  color: var(--bb-text-dim);
+}
+
+.bb-analytics-kpi-row {
+  margin-bottom: 8px;
+}
+
+.bb-analytics-block {
+  height: 100%;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid rgba(245,166,35,0.14);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+}
+
+.bb-analytics-subtitle {
+  margin-bottom: 10px;
+  font-family: var(--bb-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--bb-orange);
+}
+
 .bb-analysis-company {
   display: flex;
   flex-direction: column;
@@ -961,6 +996,15 @@ body.bb-mobile-mode .bb-kpi-title {
 body.bb-mobile-mode .bb-kpi-value {
   font-size: 15px;
   line-height: 1.25;
+}
+
+body.bb-mobile-mode .bb-analytics-block {
+  padding: 10px;
+}
+
+body.bb-mobile-mode .bb-analytics-subtitle {
+  font-size: 9px;
+  letter-spacing: 1px;
 }
 
 body.bb-mobile-mode .bb-header-actions,
